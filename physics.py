@@ -1,27 +1,27 @@
 """
-Faz 1 - Fizik çekirdeği (numpy, popülasyon vektörize).
+Phase 1 - Physics core (numpy, population-vectorized).
 
 Model
 -----
-* Canlı bir AĞAÇTIR: nokta 0 = kafa (kök). Her i>=1 noktası için bir "kemik" vardır:
-  parent[i] -> i. parent[i] < i olmak zorundadır (ağaç sırası).
-* Kütle noktalarda (eklemlerde) bulunur, kemikler kütlesizdir.
-* Kemik uzunlukları kısıtlıdır (PBD / Gauss-Seidel).
-* Kemik 1 = "boyun/omurga": kafanın yönünü tanımlar (gövde açısı phi = açı(kemik 1) - theta0[1]).
-  Bağımsız bir kafa-açısı serbestliği YOKTUR; gövde açısı tamamen geometriden ve fizikten doğar.
-  Kemik 1'in kendi motoru yoktur (pasif); en fazla 23 motorlu eklem + 1 pasif omurga.
-* Eklem i (i>=2 veya ...) = kemik i ile referans kemiği arasındaki açı.
-    - parent[i] == 0 ise referans = kemik 1
-    - aksi halde referans = parent[i] noktasının kendi kemiği.
-  Eklem torku iki taraflı kuvvet çifti olarak uygulanır (net kuvvet sıfır, açısal momentum korunur).
-* Su: kemik başına anizotropik (normal >> teğet) karesel sürükleme, 2 alt-segmentle.
-* Dış hile yok: canlıya yalnızca eklem torkları ve su kuvvetleri etki eder.
+* A creature is a TREE: point 0 = head (root). For every point i>=1 there is a "bone":
+  parent[i] -> i. parent[i] < i is required (tree order).
+* Mass lives at the points (joints), bones are massless.
+* Bone lengths are constrained (PBD / Gauss-Seidel).
+* Bone 1 = "neck/spine": defines the head's direction (body angle phi = angle(bone 1) - theta0[1]).
+  There is NO independent head-angle degree of freedom; the body angle arises entirely from geometry and physics.
+  Bone 1 has no motor of its own (passive); at most 23 motorized joints + 1 passive spine.
+* Joint i (i>=2 or ...) = the angle between bone i and the reference bone.
+    - if parent[i] == 0 the reference = bone 1
+    - otherwise the reference = the bone of point parent[i].
+  Joint torque is applied as a two-sided force couple (net force zero, angular momentum conserved).
+* Water: per-bone anisotropic (normal >> tangential) quadratic drag, with 2 sub-segments.
+* No external cheating: only joint torques and water forces act on the creature.
 
-Tüm diziler (B, N) veya (B, N, 2) şeklindedir; B = popülasyon, N = MAX_POINTS (25 = kafa + 24 uzuv).
-Kullanılmayan noktalar `active=False` ile maskelenir.
+All arrays have shape (B, N) or (B, N, 2); B = population, N = MAX_POINTS (25 = head + 24 limbs).
+Unused points are masked with `active=False`.
 
-Not: Eklem açısı theta_rel, dinlenme açısına (theta0) göre ölçülür ve [jlo, jhi] ile sınırlanır
-(jlo < 0 < jhi). Böylece ±pi sarma sorunu çıkmaz.
+Note: the joint angle theta_rel is measured relative to the rest angle (theta0) and limited by [jlo, jhi]
+(jlo < 0 < jhi). This avoids the ±pi wrap-around problem.
 """
 from __future__ import annotations
 
@@ -29,56 +29,56 @@ from dataclasses import dataclass, field
 import numpy as np
 
 MAX_LIMBS = 24
-MAX_POINTS = MAX_LIMBS + 2     # kafa + 24 uzuv + 1 'burun' noktası (kafa yönü)
-NOSE_L, NOSE_M, NOSE_W = 0.5, 1.0, 0.1   # burun: kafaya bağlı sabit uzunluklu, motorsuz kemik; yönü = gövde yönü
-# Fizik sürümü: sayısal sonuçları değiştiren her düzeltmede artırılır.
-#   1: dt=0.01 (hafif uzuv + güçlü motor kombinasyonlarında sayısal enerji sömürüsüne açıktı)
-#   2: dt=0.005 + tork sınırı
-#   3: DOĞRUSAL (viskoz) sürükleme, anizotropik (düşük Reynolds sayısı rejimi): dalgalanarak yüzme çok daha
-#      verimli (ideal dalga 0.12 -> ~1 m/s) ve motorlar kapanınca canlı ~2 sn'de duruyor (eski: 14 sn).
-#   4: eklem sınırı yayı/sönümü ve TOPLAM eklem torku ataletle sınırlı (indirgenmiş atalet): hafif+kısa kemik zincirlerinde
-#      sınır yayı sayısal olarak patlıyordu (tork on binlere, eklem hızı yüzlerce rad/s, sonuç dt'ye bağlı). Gövde yönü
-#      (burun) modu da bu sürümle geldi (eski mod davranışı aynı kalır).
+MAX_POINTS = MAX_LIMBS + 2     # head + 24 limbs + 1 'nose' point (head direction)
+NOSE_L, NOSE_M, NOSE_W = 0.5, 1.0, 0.1   # nose: a fixed-length, motorless bone attached to the head; its direction = body direction
+# Physics version: incremented with every fix that changes numerical results.
+#   1: dt=0.01 (was prone to numerical energy exploitation with light-limb + strong-motor combinations)
+#   2: dt=0.005 + torque limit
+#   3: LINEAR (viscous) drag, anisotropic (low Reynolds number regime): undulating swimming is much more
+#      efficient (ideal wave 0.12 -> ~1 m/s) and when the motors are off the creature stops in ~2 s (old: 14 s).
+#   4: joint limit spring/damping and TOTAL joint torque bounded by inertia (reduced inertia): in light + short bone chains
+#      the limit spring blew up numerically (torque in the tens of thousands, joint speed hundreds of rad/s, result dependent on dt). The body
+#      direction (nose) mode also came with this version (old mode behavior remains the same).
 PHYSICS_VERSION = 4
 
 
 # --------------------------------------------------------------------------- #
-#  Parametreler ve veri yapıları
+#  Parameters and data structures
 # --------------------------------------------------------------------------- #
 @dataclass
 class PhysicsParams:
     dt: float = 0.005
-    rho: float = 1.0          # su yoğunluğu ölçeği
-    cn: float = 0.0           # KARESEL sürükleme: normal yön (sürüm 3'te kapalı; yüksek Reynolds rejimi için)
-    ct: float = 0.0           # karesel sürükleme: teğet yön
-    kn_lin: float = 60.0      # DOĞRUSAL (viskoz) sürükleme: kemiğe DİK yön katsayısı
-    kt_lin: float = 3.0       # kemiğe PARALEL yön (kn_lin'in 1/20'si -> güçlü anizotropi = itki)
-    c_point: float = 0.05     # nokta (gövde) izotropik karesel sürüklemesi (küçük: gövde akıntıya karşı ince)
-    alpha_max: float = 250.0  # azami açısal ivme (rad/s^2): tork = min(komut*tau_max, alpha_max*atalet)
-                              # hafif uzva aşırı güçlü motor = zaman adımının çözemediği sayısal rejim
-    k_limit: float = 40.0     # eklem sınırı yay sertliği (tork_max ile çarpılır)
-    c_limit: float = 4.0      # eklem sınırı sönümü
-    iterations: int = 4       # PBD tur sayısı (ileri+geri süpürme)
-    safe_joint: bool = True   # sürüm 4: eklem torku/sınır yayı atalete göre sınırlı (False -> sürüm 3 davranışı)
-    w_limit: float = 80.0     # sınır yayının izin verilen en büyük doğal frekansı (rad/s); dt=0.005'te w*dt=0.4
+    rho: float = 1.0          # water density scale
+    cn: float = 0.0           # QUADRATIC drag: normal direction (off in version 3; for the high Reynolds regime)
+    ct: float = 0.0           # quadratic drag: tangential direction
+    kn_lin: float = 60.0      # LINEAR (viscous) drag: coefficient for the direction PERPENDICULAR to the bone
+    kt_lin: float = 3.0       # direction PARALLEL to the bone (1/20 of kn_lin -> strong anisotropy = thrust)
+    c_point: float = 0.05     # point (body) isotropic quadratic drag (small: the body is thin against the current)
+    alpha_max: float = 250.0  # maximum angular acceleration (rad/s^2): torque = min(command*tau_max, alpha_max*inertia)
+                              # an overly strong motor on a light limb = a numerical regime the time step cannot resolve
+    k_limit: float = 40.0     # joint limit spring stiffness (multiplied by torque_max)
+    c_limit: float = 4.0      # joint limit damping
+    iterations: int = 4       # number of PBD passes (forward+backward sweep)
+    safe_joint: bool = True   # version 4: joint torque/limit spring bounded by inertia (False -> version 3 behavior)
+    w_limit: float = 80.0     # the largest natural frequency allowed for the limit spring (rad/s); w*dt=0.4 at dt=0.005
 
 
 @dataclass
 class Bodies:
-    """Bir popülasyonun (B canlı) sabit anatomisi. Faz 2'de BodyGenome'dan üretilecek."""
+    """Fixed anatomy of a population (B creatures). Will be generated from BodyGenome in Phase 2."""
     parent: np.ndarray        # (B,N) int
-    length: np.ndarray        # (B,N) kemik uzunluğu (i>=1)
-    width: np.ndarray         # (B,N) kemik kalınlığı (sürükleme yüzeyi)
-    mass: np.ndarray          # (B,N) nokta kütlesi
-    theta0: np.ndarray        # (B,N) dinlenme açısı (referans kemiğe göre)
-    jlo: np.ndarray           # (B,N) alt sınır (<=0) dinlenmeye göre
-    jhi: np.ndarray           # (B,N) üst sınır (>=0)
-    tau_max: np.ndarray       # (B,N) tork kapasitesi
-    jdamp: np.ndarray         # (B,N) eklem sönümü
-    active: np.ndarray        # (B,N) bool; [:,0] her zaman True
-    sub_mass: np.ndarray = None   # (B,N) nokta + alt ağaç kütlesi (atalet tahmini)
-    legacy_spine: np.ndarray = None  # (B,) bool: True = ESKİ mod (kemik 1 pasif omurga, gövde yönünü o belirler);
-                                     # False = gövde yönü = kafa-burun kemiği (son nokta N-1), tüm uzuvlar motorlu olabilir
+    length: np.ndarray        # (B,N) bone length (i>=1)
+    width: np.ndarray         # (B,N) bone thickness (drag surface)
+    mass: np.ndarray          # (B,N) point mass
+    theta0: np.ndarray        # (B,N) rest angle (relative to the reference bone)
+    jlo: np.ndarray           # (B,N) lower limit (<=0) relative to rest
+    jhi: np.ndarray           # (B,N) upper limit (>=0)
+    tau_max: np.ndarray       # (B,N) torque capacity
+    jdamp: np.ndarray         # (B,N) joint damping
+    active: np.ndarray        # (B,N) bool; [:,0] always True
+    sub_mass: np.ndarray = None   # (B,N) point + subtree mass (inertia estimate)
+    legacy_spine: np.ndarray = None  # (B,) bool: True = OLD mode (bone 1 is a passive spine, it determines the body direction);
+                                     # False = body direction = head-nose bone (last point N-1), all limbs may be motorized
 
     @property
     def B(self):
@@ -99,22 +99,22 @@ class Bodies:
 class State:
     x: np.ndarray       # (B,N,2)
     v: np.ndarray       # (B,N,2)
-    phi: np.ndarray     # (B,) gövde açısı (türetilmiş)
-    omega: np.ndarray   # (B,) gövde açısal hızı (türetilmiş)
+    phi: np.ndarray     # (B,) body angle (derived)
+    omega: np.ndarray   # (B,) body angular velocity (derived)
     t: float = 0.0
-    theta: np.ndarray = None   # (B,N) son eklem açıları (dinlenmeye göre)
-    jvel: np.ndarray = None    # (B,N) son eklem açısal hızları
-    tau: np.ndarray = None     # (B,N) son uygulanan toplam eklem torku
+    theta: np.ndarray = None   # (B,N) latest joint angles (relative to rest)
+    jvel: np.ndarray = None    # (B,N) latest joint angular velocities
+    tau: np.ndarray = None     # (B,N) latest total applied joint torque
 
 
 # --------------------------------------------------------------------------- #
-#  Canlı kurma yardımcıları
+#  Creature setup helpers
 # --------------------------------------------------------------------------- #
 def make_bodies(specs: list[dict], n_points: int = MAX_POINTS) -> Bodies:
     """
-    specs: her canlı için dict:
-        parent: list[int]            uzunluğu n (nokta 0 dahil; parent[0] göz ardı edilir)
-        length, width, mass, theta0, jlo, jhi, tau_max, jdamp: uzunluğu n listeler (indeks 0 göz ardı)
+    specs: a dict for each creature:
+        parent: list[int]            length n (including point 0; parent[0] is ignored)
+        length, width, mass, theta0, jlo, jhi, tau_max, jdamp: lists of length n (index 0 ignored)
     """
     B, N = len(specs), n_points
     leg = np.array([bool(s.get("legacy_spine", True)) for s in specs], dtype=bool)
@@ -124,19 +124,19 @@ def make_bodies(specs: list[dict], n_points: int = MAX_POINTS) -> Bodies:
     active = np.zeros((B, N), dtype=bool)
     for b, s in enumerate(specs):
         n = len(s["parent"])
-        assert n <= (N if leg[b] else N - 1), "en fazla %d uzuv" % (N - 1 - (0 if leg[b] else 1))
+        assert n <= (N if leg[b] else N - 1), "at most %d limbs" % (N - 1 - (0 if leg[b] else 1))
         for i in range(1, n):
-            assert 0 <= s["parent"][i] < i, "ağaç sırası: parent[i] < i olmalı"
+            assert 0 <= s["parent"][i] < i, "tree order: parent[i] < i is required"
         parent[b, :n] = s["parent"]
         for k in arr:
             arr[k][b, :n] = s[k]
         active[b, :n] = True
-        if not leg[b]:                      # burun: kafa yönünü taşıyan son nokta (kafaya bağlı)
+        if not leg[b]:                      # nose: the last point that carries the head direction (attached to the head)
             k = N - 1
             parent[b, k] = 0
             arr["length"][b, k], arr["width"][b, k], arr["mass"][b, k] = NOSE_L, NOSE_W, NOSE_M
             active[b, k] = True
-    # kullanılmayan noktalar: güvenli değerler
+    # unused points: safe values
     arr["length"][~active] = 1.0
     arr["mass"][~active] = 1.0
     arr["width"][~active] = 0.0
@@ -149,7 +149,7 @@ def make_bodies(specs: list[dict], n_points: int = MAX_POINTS) -> Bodies:
 
 
 def init_state(bodies: Bodies, pos=None, heading=None) -> State:
-    """Dinlenme geometrisinden başlangıç durumu. pos (B,2), heading (B,) opsiyonel."""
+    """Initial state from the rest geometry. pos (B,2), heading (B,) optional."""
     B, N = bodies.B, bodies.N
     pos = np.zeros((B, 2)) if pos is None else np.asarray(pos, float).reshape(B, 2)
     heading = np.zeros(B) if heading is None else np.asarray(heading, float).reshape(B)
@@ -167,14 +167,14 @@ def init_state(bodies: Bodies, pos=None, heading=None) -> State:
         alpha[:, i] = ref + bodies.theta0[:, i]
         d = bodies.length[:, i, None] * np.stack([np.cos(alpha[:, i]), np.sin(alpha[:, i])], -1)
         x[:, i] = x[ar, p] + d
-    # kullanılmayan noktalar kafada dursun
+    # unused points stay at the head
     x[~bodies.active] = np.broadcast_to(pos[:, None, :], x.shape)[~bodies.active]
     return State(x=x, v=np.zeros_like(x), phi=heading.copy(), omega=np.zeros(B), t=0.0,
                  theta=np.zeros((B, N)), jvel=np.zeros((B, N)), tau=np.zeros((B, N)))
 
 
 # --------------------------------------------------------------------------- #
-#  Çekirdek fonksiyonlar
+#  Core functions
 # --------------------------------------------------------------------------- #
 def _wrap(a):
     return (a + np.pi) % (2 * np.pi) - np.pi
@@ -185,7 +185,7 @@ def _leg(bd):
 
 
 def _heading(x, v, bd):
-    """Gövde açısı ve açısal hızı. Eski mod: kemik 1 yönü (-theta0). Yeni mod: kafadan burun kemiğine."""
+    """Body angle and angular velocity. Old mode: direction of bone 1 (-theta0). New mode: from the head to the nose bone."""
     leg = _leg(bd)
     k = np.where(leg, 1, bd.N - 1)
     ar = np.arange(bd.B)
@@ -198,7 +198,7 @@ def _heading(x, v, bd):
 
 
 def _scatter(idx, vals, B, N):
-    """(B,N) hedef indekslerine (B,N,2) değerleri toplayarak yaz -> (B,N,2)."""
+    """Write (B,N,2) values by summing them into the (B,N) target indices -> (B,N,2)."""
     flat = (np.arange(B)[:, None] * N + idx).ravel()
     out = np.empty((B * N, 2))
     for c in range(2):
@@ -207,28 +207,28 @@ def _scatter(idx, vals, B, N):
 
 
 def _gather(arr, idx):
-    """arr (B,N,...) içinden idx (B,N) ile satır seç."""
+    """Select rows from arr (B,N,...) using idx (B,N)."""
     if arr.ndim == 3:
         return np.take_along_axis(arr, idx[..., None], axis=1)
     return np.take_along_axis(arr, idx, axis=1)
 
 
-SPINE_BONE = 1   # gövde yönünü tanımlayan kemik
+SPINE_BONE = 1   # the bone that defines the body direction
 
 
 def motor_mask(bd: Bodies) -> np.ndarray:
-    """(B,N) bool: hangi kemiklerin motorlu eklemi var. Beyin G/Ç ve genom BURADAN okur.
-    Pasif omurgayı değiştirmek için bu fonksiyon ve joint_kinematics/step içindeki
-    referans-kemik tanımı (refidx) yeterlidir."""
+    """(B,N) bool: which bones have a motorized joint. Brain I/O and the genome read FROM HERE.
+    To change the passive spine, this function and the reference-bone definition (refidx) in
+    joint_kinematics/step are enough."""
     m = bd.bone_active.copy()
     leg = _leg(bd)
-    m[:, SPINE_BONE] = ~leg & m[:, SPINE_BONE]         # eski mod: kemik 1 pasif omurga; yeni modda motorlu
-    m[:, bd.N - 1] = leg & m[:, bd.N - 1]              # yeni mod: son nokta = burun (motorsuz)
+    m[:, SPINE_BONE] = ~leg & m[:, SPINE_BONE]         # old mode: bone 1 is a passive spine; motorized in the new mode
+    m[:, bd.N - 1] = leg & m[:, bd.N - 1]              # new mode: last point = nose (motorless)
     return m
 
 
 def joint_kinematics(st: State, bd: Bodies):
-    """Eklem açısı (dinlenmeye göre) ve açısal hızı, kemik yönleri vb."""
+    """Joint angle (relative to rest) and angular velocity, bone directions, etc."""
     par = bd.parent
     xp = _gather(st.x, par)
     vp = _gather(st.v, par)
@@ -239,7 +239,7 @@ def joint_kinematics(st: State, bd: Bodies):
     alpha = np.arctan2(d[..., 1], d[..., 0])
     dv = st.v - vp
     wb = (d[..., 0] * dv[..., 1] - d[..., 1] * dv[..., 0]) / L ** 2
-    # referans kemik: kafaya bağlı uzuvlar eski modda kemik 1'e, yeni modda burun kemiğine (N-1) göre eklemlenir
+    # reference bone: limbs attached to the head articulate relative to bone 1 in the old mode, to the nose bone (N-1) in the new mode
     refidx = np.where(par == 0, np.where(_leg(bd)[:, None], 1, bd.N - 1), par)
     ref = _gather(alpha, refidx)
     wref = _gather(wb, refidx)
@@ -254,8 +254,8 @@ def joint_kinematics(st: State, bd: Bodies):
 
 def step(st: State, bd: Bodies, ctrl: np.ndarray, pp: PhysicsParams, drag: bool = True):
     """
-    Bir fizik adımı. ctrl: (B,N) in [-1,1]; ctrl[:,i] = eklem i'in (kemik i) motor komutu.
-    Dönüş: yok (st yerinde güncellenir).
+    One physics step. ctrl: (B,N) in [-1,1]; ctrl[:,i] = motor command of joint i (bone i).
+    Returns: nothing (st is updated in place).
     """
     B, N = bd.B, bd.N
     dt = pp.dt
@@ -266,7 +266,7 @@ def step(st: State, bd: Bodies, ctrl: np.ndarray, pp: PhysicsParams, drag: bool 
     L, u, n, theta, jvel = kin["L"], kin["u"], kin["n"], kin["theta"], kin["jvel"]
     hj, refidx = kin["has_joint"], kin["refidx"]
 
-    # ---- eklem torku ----
+    # ---- joint torque ----
     tau = np.clip(ctrl, -1.0, 1.0) * bd.tau_max
     tau_cap = pp.alpha_max * np.maximum(bd.sub_mass * L ** 2, 1e-4)
     tau = np.clip(tau, -tau_cap, tau_cap)
@@ -275,11 +275,11 @@ def step(st: State, bd: Bodies, ctrl: np.ndarray, pp: PhysicsParams, drag: bool 
     under = np.maximum(bd.jlo - theta, 0.0)
     viol = (over > 0) | (under > 0)
     if pp.safe_joint:
-        # İndirgenmiş atalet: kemiğin ve referans kemiğin uç-nokta ataletlerinin seri birleşimi (alt sınır tahmini).
+        # Reduced inertia: series combination of the end-point inertias of the bone and the reference bone (a lower-bound estimate).
         L_ref = _gather(L, refidx)
         I_i = bd.mass * L ** 2
         I_r = _gather(bd.mass, refidx) * L_ref ** 2
-        if not _leg(bd).all():                      # burun referanslı eklemler: kafa+burun çiftinin indirgenmiş ataleti
+        if not _leg(bd).all():                      # joints referenced to the nose: reduced inertia of the head+nose pair
             mh, mn = bd.mass[:, 0], bd.mass[:, N - 1]
             i_n = (mh * mn / (mh + mn) * bd.length[:, N - 1] ** 2)[:, None]
             I_r = np.where((refidx == N - 1) & ~_leg(bd)[:, None], i_n, I_r)
@@ -289,38 +289,38 @@ def step(st: State, bd: Bodies, ctrl: np.ndarray, pp: PhysicsParams, drag: bool 
         tau += k_lim * (under - over)
         tau -= np.where(viol, c_lim * jvel, 0.0)
         cap2 = pp.alpha_max * I_red
-        tau = np.clip(tau, -cap2, cap2)             # motor + sönüm + sınır: toplam tork açısal ivmeyi sınırlar
+        tau = np.clip(tau, -cap2, cap2)             # motor + damping + limit: the total torque bounds the angular acceleration
     else:
         tau += bd.tau_max * (-pp.k_limit * over + pp.k_limit * under)
         tau -= np.where(viol, pp.c_limit * bd.tau_max * jvel * 0.1, 0.0)
     tau = np.where(hj, tau, 0.0)
     leg = _leg(bd)
-    if not leg.all():       # burna tepki: burun+kafa çiftinin ataleti küçükse tork o kadar sınırlanır (sayısal sömürü önlemi)
+    if not leg.all():       # reaction on the nose: if the inertia of the nose+head pair is small, torque is limited accordingly (guards against numerical exploitation)
         mh, mn = bd.mass[:, 0], bd.mass[:, N - 1]
         i_nose = (mh * mn / (mh + mn) * bd.length[:, N - 1] ** 2)[:, None]
         nr = (refidx == N - 1) & ~leg[:, None]
         tc = np.where(nr, pp.alpha_max * i_nose, np.inf)
         tau = np.clip(tau, -tc, tc)
-        tot = np.sum(np.abs(tau) * nr, axis=1)        # kafaya bağlı TÜM uzuvların toplam tepki torku da sınırlı
+        tot = np.sum(np.abs(tau) * nr, axis=1)        # the total reaction torque of ALL limbs attached to the head is also limited
         cap = pp.alpha_max * i_nose[:, 0]
         scale = np.where(tot > cap, cap / np.maximum(tot, 1e-9), 1.0)
         tau = np.where(nr, tau * scale[:, None], tau)
 
     F = np.zeros_like(st.x)
-    # kemik i üzerine kuvvet çifti: +f n @ i , -f n @ parent[i], f = tau / L
+    # force couple on bone i: +f n @ i , -f n @ parent[i], f = tau / L
     f = (tau / L)[..., None] * n
     F += f
     F -= _scatter(par, f, B, N)
-    # tepki: referans kemiğe -tau (kemik 1 dahil; kafaya ayrı serbestlik yok)
+    # reaction: -tau on the reference bone (including bone 1; there is no separate degree of freedom for the head)
     jp = refidx
     Lj = _gather(L, jp)
     nj = _gather(n, jp)
-    gp = _gather(par, jp)           # referans kemiğin başlangıç noktası
+    gp = _gather(par, jp)           # start point of the reference bone
     fr = np.where(hj, -tau / Lj, 0.0)[..., None] * nj
     F += _scatter(jp, fr, B, N)
     F -= _scatter(gp, fr, B, N)
 
-    # ---- su kuvvetleri ----
+    # ---- water forces ----
     if drag:
         xp_v = _gather(st.v, par)
         for s in (0.25, 0.75):
@@ -338,13 +338,13 @@ def step(st: State, bd: Bodies, ctrl: np.ndarray, pp: PhysicsParams, drag: bool 
         speed = np.linalg.norm(st.v, axis=-1, keepdims=True)
         F += -pp.rho * pp.c_point * np.sqrt(bd.mass)[..., None] * speed * st.v * bd.active[..., None]
 
-    # ---- entegrasyon (semi-implicit Euler) ----
+    # ---- integration (semi-implicit Euler) ----
     inv_m = np.where(bd.active, 1.0 / bd.mass, 0.0)
     st.v += F * inv_m[..., None] * dt
     x_old = st.x.copy()
     st.x += st.v * dt
 
-    # ---- uzunluk kısıtları (PBD, Gauss-Seidel) ----
+    # ---- length constraints (PBD, Gauss-Seidel) ----
     x = st.x
     order = list(range(1, N))
     for it in range(pp.iterations):
@@ -372,10 +372,10 @@ def step(st: State, bd: Bodies, ctrl: np.ndarray, pp: PhysicsParams, drag: bool 
 
 
 # --------------------------------------------------------------------------- #
-#  Ölçüm yardımcıları (Faz 2/3'te sensör ve fitness için kullanılacak)
+#  Measurement helpers (will be used for sensors and fitness in Phase 2/3)
 # --------------------------------------------------------------------------- #
 def _meas_mass(bd: Bodies):
-    """Ölçümlerde (kütle merkezi, hız) kullanılan kütleler: yeni modda burun (görünmez yön taşıyıcısı) hariç."""
+    """Masses used in measurements (center of mass, velocity): in the new mode excluding the nose (invisible direction carrier)."""
     m = np.where(bd.active, bd.mass, 0.0)
     m[:, bd.N - 1] = m[:, bd.N - 1] * _leg(bd)
     return m
@@ -392,7 +392,7 @@ def com_velocity(st: State, bd: Bodies):
 
 
 def constraint_error(st: State, bd: Bodies):
-    """Maksimum bağıl kemik uzunluğu hatası (B,)."""
+    """Maximum relative bone length error (B,)."""
     xp = _gather(st.x, bd.parent)
     L = np.linalg.norm(st.x - xp, axis=-1)
     err = np.abs(L - bd.length) / bd.length
@@ -400,7 +400,7 @@ def constraint_error(st: State, bd: Bodies):
 
 
 def momentum(st: State, bd: Bodies):
-    """Doğrusal ve açısal momentum . Sürtünmesiz testler için."""
+    """Linear and angular momentum. For dragless tests."""
     m = np.where(bd.active, bd.mass, 0.0)
     p = np.sum(st.v * m[..., None], axis=1)
     Lz = np.sum(m * (st.x[..., 0] * st.v[..., 1] - st.x[..., 1] * st.v[..., 0]), axis=1)
@@ -408,11 +408,11 @@ def momentum(st: State, bd: Bodies):
 
 
 # --------------------------------------------------------------------------- #
-#  Hazır test canlıları
+#  Ready-made test creatures
 # --------------------------------------------------------------------------- #
 def chain_spec(n_seg=5, seg_len=0.5, mass=1.0, width=0.15, tau_max=3.0,
                jrange=0.9, jdamp=0.15, head_mass=2.0):
-    """Balık benzeri zincir: kafa öne bakar, gövde arkaya (theta0 = pi) uzanır."""
+    """Fish-like chain: the head faces forward, the body extends backward (theta0 = pi)."""
     n = n_seg + 1
     parent = [0] + list(range(0, n - 1))
     theta0 = [0.0, np.pi] + [0.0] * (n_seg - 1)
@@ -425,7 +425,7 @@ def chain_spec(n_seg=5, seg_len=0.5, mass=1.0, width=0.15, tau_max=3.0,
 
 
 def star_spec(n_arms=4, arm_len=0.6, seg=2, **kw):
-    """Kafadan dallanan kollu yapı: dallanmayı (bir noktaya birden çok uzuv) test eder."""
+    """A structure with arms branching from the head: tests branching (multiple limbs on one point)."""
     parent, theta0, length, width, mass, lo, hi, tau, jd = [0], [0.0], [1.0], [0.0], [2.0], [0.0], [0.0], [0.0], [0.0]
     for a in range(n_arms):
         ang = 2 * np.pi * a / n_arms

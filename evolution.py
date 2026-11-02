@@ -1,26 +1,26 @@
 """
-Faz 3 - Evrim döngüsü: fitness, seçilim, mutasyon/çaprazlama, çok çekirdekli değerlendirme.
+Phase 3 - Evolution loop: fitness, selection, mutation/crossover, multi-core evaluation.
 
-Değerlendirme
--------------
-Her birey K farklı başlangıç koşulunda (rastgele gövde açısı + hedef yön dizisi) simüle edilir.
-Popülasyon x deneme tek bir numpy batch'i olarak çalışır; popülasyon ayrıca işçi süreçlere bölünür.
-Bir denemenin yarısında hedef yön DEĞİŞİR (yön değiştirme yeteneği ölçülür).
+Evaluation
+----------
+Each individual is simulated under K different initial conditions (random body angle + target direction sequence).
+Population x trials runs as a single numpy batch; the population is additionally split across worker processes.
+In half of each trial the target direction CHANGES (the ability to change direction is measured).
 
-Fitness (deneme başına, aşağıdaki terimlerin toplamı):
-    + hedef yönde ilerleme        (COM yer değiştirmesinin hedefe izdüşümü / süre)   <- asıl ödül
-    - yanal sapma                 (hedefe dik yer değiştirme)                        w_lat
-    - enerji                      (ortalama komut^2)                                  w_energy
-    - fiziksel kararsızlık        (ortalama gövde dönme hızı)                         w_spin
-    - titreme                     (komutların adımlar arası değişimi)                 w_jitter
-Yerinde dönme / titreme: COM yer değiştirmesi ~0 olduğundan ilerleme ödülü yok, cezalar var.
-Birey fitness'ı = 0.7 * ortalama + 0.3 * en kötü deneme (farklı koşullarda tutarlılık).
+Fitness (per trial, the sum of the terms below):
+    + progress in the target direction   (projection of the COM displacement onto the target / duration)   <- the main reward
+    - lateral deviation                  (displacement perpendicular to the target)                        w_lat
+    - energy                             (mean command^2)                                                   w_energy
+    - physical instability               (mean body rotation rate)                                          w_spin
+    - jitter                             (change of commands between steps)                                 w_jitter
+Spinning in place / jitter: since the COM displacement is ~0 there is no progress reward, but there are penalties.
+Individual fitness = 0.7 * mean + 0.3 * worst trial (consistency across different conditions).
 
-Müfredat: zorluk "aşama" ile artar (stage_len nesilde bir):
-    0: hedef = gövdenin önü   1: 4 yön (ön/arka/sağ/sol)   2: 8 yön + deneme ortasında yön değişimi
-    3: aşama 2 + "KOMUT YOK" segmentleri (hedef vektörü 0): canlı durmayı öğrenir.
-       Durma segmentinde ödül = -stop_scale*(ortalama hız) -> kımıldamadan durmak en yüksek puan.
-       (stop_scale=1 iken popülasyon 'hiç kıpırdamama'ya çöküyordu: yüzmek 0.65*+0.3 -0.35*0.3 ~ 0.)
+Curriculum: difficulty increases with "stage" (once every stage_len generations):
+    0: target = front of the body   1: 4 directions (front/back/right/left)   2: 8 directions + direction change mid-trial
+    3: stage 2 + "NO COMMAND" segments (target vector 0): the creature learns to stop.
+       Reward in a stop segment = -stop_scale*(mean speed) -> standing perfectly still scores highest.
+       (with stop_scale=1 the population collapsed to 'never moving at all': swimming 0.65*+0.3 -0.35*0.3 ~ 0.)
 """
 from __future__ import annotations
 
@@ -39,26 +39,26 @@ from physics import (PHYSICS_VERSION, PhysicsParams, center_of_mass, constraint_
 
 
 # --------------------------------------------------------------------------- #
-#  Ayarlar
+#  Settings
 # --------------------------------------------------------------------------- #
 @dataclass
 class EvalConfig:
-    duration: float = 8.0       # saniye
-    trials: int = 4             # birey başına farklı başlangıç koşulu
-    warmup: float = 1.0         # ilk saniye ölçüme dahil değil
-    grace: float = 1.0          # yön değişiminden sonra ölçüme dahil olmayan süre
-    control_dt: float = 0.02    # beyin kontrol periyodu (sn) -> 50 Hz; fizik adımından bağımsız
-    w_lat: float = 0.2          # hedefe dik sapma cezası
-    stop_scale: float = 0.5     # 'komut yok' segmentinde hız cezası çarpanı (1.0 -> durma, yüzmeyi tamamen sıfırlıyordu)
-    neg_scale: float = 0.25     # hedefin TERSİNE ilerleme cezası = bu çarpanla yumuşatılır (durmak yüzmekten iyi olmasın)
+    duration: float = 8.0       # seconds
+    trials: int = 4             # different initial conditions per individual
+    warmup: float = 1.0         # the first second is not included in the measurement
+    grace: float = 1.0          # time after a direction change that is not included in the measurement
+    control_dt: float = 0.02    # brain control period (s) -> 50 Hz; independent of the physics step
+    w_lat: float = 0.2          # penalty for deviation perpendicular to the target
+    stop_scale: float = 0.5     # speed penalty multiplier in a 'no command' segment (1.0 -> stopping, wiped out swimming entirely)
+    neg_scale: float = 0.25     # penalty for progress OPPOSITE to the target = softened by this multiplier (so that standing still is not better than swimming)
     w_energy: float = 0.02
     w_spin: float = 0.01
     w_jitter: float = 0.03
-    worst_weight: float = 0.15  # fitness = (1-w)*ortalama + w*en kötü
-    bad_fitness: float = -5.0   # patlayan/NaN bireyler
-    gate_penalties: bool = True  # enerji/dönme/titreme cezaları canlı gerçekten ilerleyince tam güce çıkar
-    gate_floor: float = 0.25     # ilerlemeyen canlıda cezaların kalan oranı (ceza 'kıpırdama'yı tek başına seçtirmesin)
-    gate_speed: float = 0.3      # bu ilerleme hızında (m/s) cezalar tam uygulanır
+    worst_weight: float = 0.15  # fitness = (1-w)*mean + w*worst
+    bad_fitness: float = -5.0   # exploded/NaN individuals
+    gate_penalties: bool = True  # energy/spin/jitter penalties reach full strength when the creature really progresses
+    gate_floor: float = 0.25     # fraction of the penalties that remains for a non-progressing creature (so the penalty alone doesn't select for 'staying still')
+    gate_speed: float = 0.3      # penalties apply in full at this progress speed (m/s)
 
 
 @dataclass
@@ -67,32 +67,32 @@ class EvoConfig:
     elite: int = 3
     tournament: int = 3
     p_crossover: float = 0.4
-    immigrants: float = 0.04    # her nesil rastgele yeni birey oranı
-    stage_len: int = 25         # müfredat aşaması başına nesil
+    immigrants: float = 0.04    # fraction of new random individuals each generation
+    stage_len: int = 25         # generations per curriculum stage
     init_limbs: tuple = (4, 10)
     max_stage: int = 3
-    curriculum: str = "adaptive"   # adaptive: başarıya göre zorluk artar/azalır | fixed: stage_len nesilde bir
-    adv_fitness: float = 0.15       # şampiyon bunu aşarsa (adv_streak nesil üst üste) zorluk +1
+    curriculum: str = "adaptive"   # adaptive: difficulty rises/falls with success | fixed: once every stage_len generations
+    adv_fitness: float = 0.15       # if the champion exceeds this (adv_streak generations in a row), difficulty +1
     adv_streak: int = 3
-    adv_min_gens: int = 5           # bir zorlukta en az bu kadar nesil kal
-    regress_fitness: float = 0.03   # şampiyon regress_gens nesil boyunca bunun altında kalırsa zorluk -1
+    adv_min_gens: int = 5           # stay at least this many generations at a difficulty
+    regress_fitness: float = 0.03   # if the champion stays below this for regress_gens generations, difficulty -1
     regress_gens: int = 25
-    freeze_body: bool = False       # True: vücut sabit, sadece beyin evrimleşir
-    p_stop: float = 0.35        # aşama 3'te her segmentin 'dur' olma olasılığı
-    legacy_spine: bool = False   # True: rastgele/göçmen bireyler ESKİ omurga modunda doğar (varsayılan: gövde yönü = kafa)
-    stop_command: bool = False  # 'komut yok = dur' (kademe 10 / aşama 3) şimdilik KAPALI; True -> eski davranış
-    stall_boost: bool = True    # takılma algılanınca mutasyon güçlenir, göçmenler agresifleşir
-    stall_gens: int = 15        # şampiyon hareketli ortalaması bu kadar nesil iyileşmezse 'takıldı' say
-    stall_window: int = 5       # şampiyon fitness'ı bu kadar nesillik ortalamayla izlenir (gürültü için)
-    stall_eps: float = 0.01     # bundan az iyileşme 'iyileşme' sayılmaz
-    boost_max: float = 3.0      # mutasyon büyüklüğünün en çok çarpanı
-    boost_step_gens: int = 10   # takılma sürdükçe çarpan bu kadar nesilde +1 artar
+    freeze_body: bool = False       # True: body is fixed, only the brain evolves
+    p_stop: float = 0.35        # probability that each segment is 'stop' in stage 3
+    legacy_spine: bool = False   # True: random/immigrant individuals are born in the OLD spine mode (default: body direction = head)
+    stop_command: bool = False  # 'no command = stop' (notch 10 / stage 3) is OFF for now; True -> old behavior
+    stall_boost: bool = True    # when a stall is detected mutation gets stronger, immigrants get more aggressive
+    stall_gens: int = 15        # count as 'stalled' if the champion's moving average does not improve for this many generations
+    stall_window: int = 5       # champion fitness is tracked with an average over this many generations (for noise)
+    stall_eps: float = 0.01     # improvement smaller than this does not count as 'improvement'
+    boost_max: float = 3.0      # maximum multiplier of the mutation size
+    boost_step_gens: int = 10   # while the stall continues, the multiplier rises by +1 every this many generations
 
 
 # --------------------------------------------------------------------------- #
-#  Denemeler ve değerlendirme
+#  Trials and evaluation
 # --------------------------------------------------------------------------- #
-NOTCH_MAX = 10   # 0: sadece ön | 1..8: yön aralığı notch*22.5° | 9: 8 yön + yön değişimi | 10: + 'dur' komutu
+NOTCH_MAX = 10   # 0: front only | 1..8: direction range notch*22.5° | 9: 8 directions + direction change | 10: + 'stop' command
 
 
 def notch_to_stage(notch: int) -> int:
@@ -100,8 +100,8 @@ def notch_to_stage(notch: int) -> int:
 
 
 def make_trials(rng: np.random.Generator, K: int, stage: int, p_stop: float = 0.35, dir_range=None) -> dict:
-    """dir_range (rad): aşama 1'de hedef yön gövde önünden en fazla bu kadar sapar (uniform ±dir_range).
-    Her nesilde bir deneme sınırdadır (±dir_range) -> eğitim cephesini zorlar. None -> eski 4 yön."""
+    """dir_range (rad): in stage 1 the target direction deviates from the body's front by at most this much (uniform ±dir_range).
+    In each generation one trial is at the boundary (±dir_range) -> pushes the training frontier. None -> old 4 directions."""
     h = rng.uniform(-np.pi, np.pi, K)
     if stage <= 0:
         o1 = np.zeros(K)
@@ -120,7 +120,7 @@ def make_trials(rng: np.random.Generator, K: int, stage: int, p_stop: float = 0.
     if stage >= 3:
         mag1 = (rng.random(K) >= p_stop).astype(float)
         mag2 = (rng.random(K) >= p_stop).astype(float)
-        if K >= 2:                       # en az bir 'dur' segmenti garanti
+        if K >= 2:                       # guarantee at least one 'stop' segment
             mag2[0] = 0.0
             mag1[0] = 1.0
     return dict(heading=h, tgt1=h + o1, tgt2=h + o2, mag1=mag1, mag2=mag2)
@@ -128,7 +128,7 @@ def make_trials(rng: np.random.Generator, K: int, stage: int, p_stop: float = 0.
 
 def evaluate_batch(genomes: list[Genome], trials: dict, cfg: EvalConfig,
                    pp: PhysicsParams = None) -> dict:
-    """Dönüş: fitness (P,), per_trial (P,K), ve ölçüm bileşenleri."""
+    """Returns: fitness (P,), per_trial (P,K), and the measurement components."""
     pp = pp or PhysicsParams()
     P, K = len(genomes), len(trials["heading"])
     rep = [g for g in genomes for _ in range(K)]
@@ -144,7 +144,7 @@ def evaluate_batch(genomes: list[Genome], trials: dict, cfg: EvalConfig,
     sw = steps // 2
     w0 = int(round(cfg.warmup / pp.dt))
     g1 = sw + int(round(cfg.grace / pp.dt))
-    assert w0 < sw < g1 < steps, "duration/warmup/grace uyumsuz"
+    assert w0 < sw < g1 < steps, "duration/warmup/grace incompatible"
     every = max(1, int(round(cfg.control_dt / pp.dt)))
     mm = motor_mask(bd)
     n_mot = np.maximum(mm.sum(1), 1)
@@ -178,8 +178,8 @@ def evaluate_batch(genomes: list[Genome], trials: dict, cfg: EvalConfig,
         u = np.stack([np.cos(tgt), np.sin(tgt)], -1)
         prog = np.sum(d * u, -1)
         lat = np.abs(d[:, 0] * u[:, 1] - d[:, 1] * u[:, 0])
-        prog = np.where(prog > 0, prog, cfg.neg_scale * prog)   # ters yöne gitmek yumuşak cezalı
-        stop = mag < 0.5                          # komut yok: kımıldamamak ödüllü
+        prog = np.where(prog > 0, prog, cfg.neg_scale * prog)   # going in the opposite direction has a softened penalty
+        stop = mag < 0.5                          # no command: standing still is rewarded
         prog = np.where(stop, -cfg.stop_scale * np.linalg.norm(d, axis=-1), prog)
         lat = np.where(stop, 0.0, lat)
         return prog, lat
@@ -188,7 +188,7 @@ def evaluate_batch(genomes: list[Genome], trials: dict, cfg: EvalConfig,
     p2, l2 = seg(g1, steps, tg2, mg2)
     prog, lat = 0.5 * (p1 + p2), 0.5 * (l1 + l2)
     pen = cfg.w_energy * energy + cfg.w_spin * spin + cfg.w_jitter * jitter
-    if cfg.gate_penalties:      # ilerlemeyen canlıda cezalar küçük: 'kıpırdamamak' çekim noktası olmasın
+    if cfg.gate_penalties:      # penalties are small for a non-progressing creature: 'staying still' must not become an attractor
         pen = pen * np.clip(cfg.gate_floor + (1 - cfg.gate_floor) * np.maximum(prog, 0) / cfg.gate_speed, cfg.gate_floor, 1.0)
     f = prog - cfg.w_lat * lat - pen
     bad = ~np.isfinite(f) | (err > 0.5)
@@ -211,26 +211,26 @@ def _eval_chunk(args):
 
 
 # --------------------------------------------------------------------------- #
-#  Evrim
+#  Evolution
 # --------------------------------------------------------------------------- #
 class Evolution:
     def __init__(self, evo: EvoConfig = None, ev: EvalConfig = None, mut: MutationConfig = None,
                  workers: int = 1, seed: int = 0, seed_genome: Genome = None):
         self.evo = evo or EvoConfig()
-        if seed_genome is not None:        # tasarımdan eğitimde mod tasarımdan gelir
+        if seed_genome is not None:        # when training from a design, the mode comes from the design
             self.evo = replace(self.evo, legacy_spine=bool(seed_genome.body.legacy_spine))
         self.ev = ev or EvalConfig()
         self.mut = mut or MutationConfig()
         self.workers = max(1, workers)
         self.rng = np.random.default_rng(seed)
         self.gen = 0
-        self.notch = 0              # adaptif müfredat: 0..NOTCH_MAX
-        self._streak = 0            # şampiyon eşiği üst üste kaç nesildir aşıyor
-        self._low = 0               # şampiyon kaç nesildir regress eşiğinin altında
-        self._at_notch = 0          # mevcut zorlukta geçirilen nesil
-        self._champ_hist = []       # son şampiyon fitness'ları (takılma izleme)
-        self._hi = -np.inf          # hareketli ortalamanın görülen en yükseği
-        self._stall = 0             # kaç nesildir iyileşme yok
+        self.notch = 0              # adaptive curriculum: 0..NOTCH_MAX
+        self._streak = 0            # for how many generations in a row the champion has exceeded the threshold
+        self._low = 0               # for how many generations the champion has been below the regress threshold
+        self._at_notch = 0          # generations spent at the current difficulty
+        self._champ_hist = []       # recent champion fitnesses (stall tracking)
+        self._hi = -np.inf          # the highest moving average seen
+        self._stall = 0             # for how many generations there has been no improvement
         self.seed_genome = seed_genome
         lo, hi = self.evo.init_limbs
         P = self.evo.pop_size
@@ -239,11 +239,11 @@ class Evolution:
         else:
             self.population = self._seeded_population(seed_genome)
         self.fitness = np.full(self.evo.pop_size, -np.inf)
-        self.history = []          # nesil başına özet
-        self.best = None           # (fitness, Genome) tüm zamanların en iyisi (aşama bazında)
+        self.history = []          # per-generation summary
+        self.best = None           # (fitness, Genome) best of all time (per stage)
         self._pool = None
 
-    # --- değerlendirme ---
+    # --- evaluation ---
     @property
     def notch_max(self) -> int:
         return NOTCH_MAX if self.evo.stop_command else NOTCH_MAX - 1
@@ -261,7 +261,7 @@ class Evolution:
         return self._pool
 
     def set_workers(self, n: int):
-        """İşçi sayısını değiştir (turbo modda artırmak için)."""
+        """Change the number of workers (to increase it in turbo mode)."""
         n = max(1, int(n))
         if n != self.workers:
             self.close()
@@ -277,7 +277,7 @@ class Evolution:
         P = len(self.population)
         if self.workers == 1:
             return evaluate_batch(self.population, trials, self.ev)
-        # boyuta göre sırala, işçilere dağıt (benzer dolgu boyutu, dengeli yük)
+        # sort by size, distribute to workers (similar padding size, balanced load)
         order = np.argsort([g.body.n for g in self.population])
         groups = [order[i::self.workers] for i in range(self.workers)]
         res = self._get_pool().map(_eval_chunk, [([self.population[i] for i in g], trials, self.ev) for g in groups])
@@ -290,8 +290,8 @@ class Evolution:
         return out
 
     def _seeded_population(self, sg: Genome) -> list:
-        """Bir tasarımdan başlangıç popülasyonu. Vücut sabitse hepsi aynı vücut, farklı beyinler.
-        Değilse yarısı aynı vücut, yarısı hafif mutasyonlu vücut. Tasarımın kendi beyni (varsa) 1. bireydir."""
+        """Initial population from a design. If the body is fixed, all share the same body with different brains.
+        Otherwise half have the same body, half a slightly mutated body. The design's own brain (if any) is individual 1."""
         P = self.evo.pop_size
         pop = [sg.copy()]
         for k in range(1, P):
@@ -299,7 +299,7 @@ class Evolution:
             if not self.evo.freeze_body and k >= P // 2:
                 body = mutate_body(body, self.rng, self.mut)
             if k <= max(1, P // 8):
-                brain = mutate_brain(sg.brain, self.rng, self.mut)       # tasarımın beyninin türevleri
+                brain = mutate_brain(sg.brain, self.rng, self.mut)       # derivatives of the design's brain
             else:
                 brain = random_brain(self.rng)
             pop.append(Genome(body, brain))
@@ -307,16 +307,16 @@ class Evolution:
             g.meta = {"seeded": True, "physics": PHYSICS_VERSION}
         return pop
 
-    # --- adaptif müfredat ---
+    # --- adaptive curriculum ---
     @property
     def dir_range(self):
-        """Aşama 1'de geçerli yön aralığı (rad); diğer aşamalarda None."""
+        """Direction range (rad) valid in stage 1; None in other stages."""
         if self.evo.curriculum != "adaptive" or notch_to_stage(self.notch) != 1:
             return None
         return min(self.notch, 8) * np.pi / 8
 
     def _update_curriculum(self, champ_fitness: float):
-        """Şampiyon yeterince iyiyse zorluğu artır; uzun süre çok kötüyse bir kademe geri al."""
+        """Increase difficulty if the champion is good enough; step back one notch if it is very poor for a long time."""
         if self.evo.curriculum != "adaptive":
             return
         self._at_notch += 1
@@ -331,9 +331,9 @@ class Evolution:
             self._streak = self._low = self._at_notch = 0
             self._reset_stall()
 
-    # --- takılma algılama ve mutasyon güçlendirme ---
+    # --- stall detection and mutation boosting ---
     def _reset_stall(self):
-        """Zorluk değişince fitness ölçeği değişir: önceki karşılaştırma geçersiz."""
+        """When the difficulty changes the fitness scale changes: the previous comparison is invalid."""
         self._champ_hist, self._hi, self._stall = [], -np.inf, 0
 
     def _track_stall(self, champ_fitness: float):
@@ -357,11 +357,11 @@ class Evolution:
         if k <= 1.0:
             return self.mut
         m = self.mut
-        r = min(k, 2.0)          # olasılıkları en çok 2 kat, adım büyüklüğünü k kat artır
+        r = min(k, 2.0)          # increase probabilities by at most 2x, step size by k x
         return replace(m, p_gene=min(0.5, m.p_gene * r), p_add=min(0.3, m.p_add * r), p_remove=min(0.3, m.p_remove * r),
                        p_mirror=min(0.3, m.p_mirror * r), brain_rate=min(0.5, m.brain_rate * r), brain_sigma=m.brain_sigma * k)
 
-    # --- seçilim ve üreme ---
+    # --- selection and reproduction ---
     def _tournament(self) -> Genome:
         idx = self.rng.integers(0, len(self.population), self.evo.tournament)
         return self.population[idx[np.argmax(self.fitness[idx])]]
@@ -383,7 +383,7 @@ class Evolution:
             nxt.append(mutate(child, self.rng, mut, self.evo.freeze_body))
         heavy = self._scaled_mut(self.evo.boost_max)
         while len(nxt) < P:
-            if k > 1 and len(nxt) % 2 == 0:       # takılmada: göçmenlerin yarısı elitin AĞIR mutasyonlu kopyası
+            if k > 1 and len(nxt) % 2 == 0:       # when stalled: half of the immigrants are HEAVILY mutated copies of the elite
                 src = self.population[order[int(self.rng.integers(0, self.evo.elite))]].copy()
                 nxt.append(mutate(src, self.rng, heavy, self.evo.freeze_body))
             elif self.seed_genome is not None and self.evo.freeze_body:
@@ -393,7 +393,7 @@ class Evolution:
         self.population = nxt
 
     def step_generation(self) -> dict:
-        """Bir nesil: değerlendir -> kaydet -> sonraki nesli üret. Özet sözlüğü döner."""
+        """One generation: evaluate -> record -> produce the next generation. Returns the summary dictionary."""
         t0 = time.time()
         trials = make_trials(self.rng, self.ev.trials, self.stage, self.evo.p_stop, self.dir_range)
         res = self.evaluate(trials)
@@ -419,9 +419,9 @@ class Evolution:
         self.gen += 1
         return summary
 
-    # --- kayıt ---
+    # --- saving ---
     def save_checkpoint(self, path: str):
-        """Eğitimi sürdürmek için (dahili format). İnsan okunur kayıtlar için save_json kullan."""
+        """For resuming training (internal format). Use save_json for human-readable records."""
         with open(path, "wb") as f:
             pickle.dump(dict(gen=self.gen, population=self.population, fitness=self.fitness,
                              history=self.history, physics=PHYSICS_VERSION, notch=self.notch, evo=asdict(self.evo), ev=asdict(self.ev),
@@ -432,5 +432,5 @@ class Evolution:
             d = pickle.load(f)
         self.gen, self.population, self.fitness, self.history = d["gen"], d["population"], d["fitness"], d["history"]
         self.notch = min(d.get("notch", 0), self.notch_max)
-        self.loaded_physics = d.get("physics", 1)   # eski sürümle eğitilmişse popülasyon yeniden uyum sağlayacak
+        self.loaded_physics = d.get("physics", 1)   # if trained with an old version the population will have to re-adapt
         self.rng.bit_generator.state = d["rng"]

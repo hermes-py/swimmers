@@ -1,13 +1,13 @@
 """
-Evrimleşen Yüzücüler - Chapter 2 (ekosistem) arayüzü.  Aşama 1: sarmal dünya, yem kaynakları, enerji, açlıktan ölüm.
+Evolving Swimmers - Chapter 2 (ecosystem) UI.  Stage 1: wrap-around world, food sources, energy, death by starvation.
 
-    python eco.py                                  # pencereli izleme (rastgele 100 canlı)
-    python eco.py --headless --seconds 600         # grafiksiz; satır satır özet + log.csv + hayatta kalanların JSON'u
+    python eco.py                                  # windowed viewer (100 random creatures)
+    python eco.py --headless --seconds 600         # headless; line-by-line summary + log.csv + survivors as JSON
     python eco.py --n 60 --seed 3 --size 50
 
-Tuşlar:  SPACE turbo · P duraklat · +/- hız · tıkla: canlı seç · S: seçili canlıyı kaydet (DENE/EDİTÖR'de açılır)
-         F: seçiliyi takip et · Z: tüm dünya · tekerlek: yakınlaştır · R: yeni dünya · H: yardım · ESC çıkış
-Pencere 1280x720 başlar, yeniden boyutlandırılabilir.
+Keys:  SPACE turbo · P pause · +/- speed · click: select a creature · S: save the selected creature (opens in PLAY/EDITOR)
+       F: follow the selected one · Z: whole world · wheel: zoom · R: new world · H: help · ESC quit
+The window starts at 1280x720 and can be resized.
 """
 from __future__ import annotations
 
@@ -45,14 +45,14 @@ class EcoApp:
         self.turbo = False
         self.paused = False
         self.show_help = True
-        self.sel = None                # seçili canlının kimliği
+        self.sel = None                # id of the selected creature
         self.follow = False
         self.running = True
         self.msg, self.msg_until = "", 0.0
         self.fit_world()
         self.fps = deque(maxlen=30)
 
-    # ---------------- yerleşim ----------------
+    # ---------------- layout ----------------
     def layout(self):
         w, h = self.screen.get_size()
         pw = int(np.clip(w * 0.24, 240, PANEL_W + 60))
@@ -69,7 +69,7 @@ class EcoApp:
     def say(self, s, secs=3.0):
         self.msg, self.msg_until = s, time.time() + secs
 
-    # ---------------- olaylar ----------------
+    # ---------------- events ----------------
     def idx_of(self, cid):
         w = self.world
         k = np.nonzero(w.ids == cid)[0]
@@ -114,7 +114,7 @@ class EcoApp:
                 self.world = self.make(self.cfg)
                 self.sel = None
                 self.fit_world()
-                self.say(f"yeni dünya (tohum {self.cfg.seed})")
+                self.say(f"new world (seed {self.cfg.seed})")
             elif k == pygame.K_s and self.sel is not None:
                 i = self.idx_of(self.sel)
                 if i is not None:
@@ -123,13 +123,13 @@ class EcoApp:
                     g.meta.update(dict(eco_id=self.sel, energy=float(w.energy[i]), age=float(w.t - w.born[i]), physics=4, diet=float(w.diet[i]), lineage=int(w.lin[i])))
                     path = os.path.join(self.out, f"eco_{self.sel:04d}.json")
                     save_json(g, path)
-                    self.say(f"kaydedildi: {path}", 5.0)
+                    self.say(f"saved: {path}", 5.0)
 
     def s2w(self, p, wh):
         c, sc = self.cam.c, self.cam.scale
         return np.array([c[0] + (p[0] - wh[0] / 2) / sc, c[1] - (p[1] - wh[1] / 2) / sc])
 
-    # ---------------- güncelleme ----------------
+    # ---------------- update ----------------
     def update(self, dt):
         t0 = time.time()
         if not self.paused and self.world.pop > 0:
@@ -148,7 +148,7 @@ class EcoApp:
             self.sel = None
             self.follow = False
 
-    # ---------------- çizim ----------------
+    # ---------------- drawing ----------------
     def draw(self):
         scr = self.screen
         h = scr.get_height()
@@ -170,7 +170,7 @@ class EcoApp:
         wh = (vw, vh)
         cam, L, sc = self.cam, w.L, self.cam.scale
         surf.fill((7, 28, 52))
-        # dünya sınırı ve ızgara (5 m)
+        # world boundary and grid (5 m)
         def sp(p):
             return cam.w2s(p, wh)
         x0, y0 = sp((0, L))
@@ -181,16 +181,16 @@ class EcoApp:
                 pygame.draw.line(surf, C_GRID_MAJOR if g % 10 == 0 else C_GRID_MINOR, sp((g, 0)), sp((g, L)))
                 pygame.draw.line(surf, C_GRID_MAJOR if g % 10 == 0 else C_GRID_MINOR, sp((0, g)), sp((L, g)))
         pygame.draw.rect(surf, (90, 150, 200), (x0, y0, x1 - x0, y1 - y0), 2)
-        # yem kaynakları (halka) ve yem
+        # food sources (ring) and food
         for s in w.src:
             pygame.draw.circle(surf, (40, 90, 60), sp(s), max(6, int(w.cfg.source_sigma * sc)), 1)
-        for p, v in zip(w.cpos, w.cval):                                           # leş: kahverengi, büyüklük = enerji
+        for p, v in zip(w.cpos, w.cval):                                           # carcass: brown, size = energy
             pygame.draw.circle(surf, (170, 110, 70), sp(p), max(3, int(0.12 * sc * math.sqrt(max(v, 1.0) / 10))))
         fr = max(2, int(0.22 * sc))
         for p, a in zip(w.fpos, w.fage):
             k = 1 - a / w.cfg.food_life
             pygame.draw.circle(surf, (int(90 + 120 * k), int(170 + 70 * k), int(80 + 40 * k)), sp(p), fr)
-        # canlılar (kenar yakınında sarılmış kopyalarıyla; kopyalar yalnızca dünya içinde görünür)
+        # creatures (with their wrapped copies near the edge; copies are visible only inside the world)
         surf.set_clip(pygame.Rect(x0, y0, x1 - x0, y1 - y0).clip(surf.get_rect()))
         com = w.st.x[:, 0]
         margin = 4.0
@@ -207,29 +207,29 @@ class EcoApp:
                 hp = c2.w2s(com[i], wh)
                 frac = float(np.clip(w.energy[i] / w.cfg.e_max, 0, 1))
                 bw = 24
-                dv = float(w.diet[i])                                   # beslenme: yeşil = otçul, kırmızı = etçil
+                dv = float(w.diet[i])                                   # diet: green = herbivore, red = carnivore
                 pygame.draw.circle(surf, (int(90 + 165 * dv), int(230 - 140 * dv), int(120 - 30 * dv)), (hp[0] + bw / 2 + 5, hp[1] - 14), 4)
                 pygame.draw.rect(surf, (20, 30, 40), (hp[0] - bw / 2, hp[1] - 16, bw, 4))
                 col = (90, 230, 120) if frac > 0.3 else (255, 190, 70) if frac > 0.12 else (255, 90, 90)
                 pygame.draw.rect(surf, col, (hp[0] - bw / 2, hp[1] - 16, bw * frac, 4))
                 if int(w.ids[i]) == self.sel:
                     pygame.draw.circle(surf, (255, 220, 80), hp, 18, 2)
-                    if w.tmag[i] > 0:         # seçili canlının algıladığı yem yönü
+                    if w.tmag[i] > 0:         # direction of the food sensed by the selected creature
                         a = w.target[i]
                         arrow(surf, C_TARGET, hp, (hp[0] + math.cos(a) * 40, hp[1] - math.sin(a) * 40), 2)
         surf.set_clip(None)
         s = w.stats()
-        text(surf, f.normal, f"t = {s['t']:.0f} s   nüfus {s['pop']}   yem {s['food']}   ort. enerji {s['mean_energy']:.0f}",
+        text(surf, f.normal, f"t = {s['t']:.0f} s   pop {s['pop']}   food {s['food']}   mean energy {s['mean_energy']:.0f}",
              (10, 8), C_TEXT)
         if self.msg and time.time() < self.msg_until:
             text(surf, f.normal, self.msg, (10, 8 + f.normal.get_height() + 4), (255, 220, 120))
         if w.pop == 0:
-            text(surf, f.huge, "NESİL TÜKENDİ", (vw // 2, vh // 2), (255, 120, 120), "center")
-            text(surf, f.normal, "R: yeni dünya", (vw // 2, vh // 2 + f.huge.get_height()), C_DIM, "center")
+            text(surf, f.huge, "EXTINCT", (vw // 2, vh // 2), (255, 120, 120), "center")
+            text(surf, f.normal, "R: new world", (vw // 2, vh // 2 + f.huge.get_height()), C_DIM, "center")
         if self.show_help:
-            text(surf, f.small, "yem: yeşil nokta · enerji çubuğu: yeşil>turuncu>kırmızı · mavi ok: seçilinin algıladığı yem yönü",
+            text(surf, f.small, "food: green dot · energy bar: green>orange>red · blue arrow: direction of the food sensed by the selected creature",
                  (10, vh - f.small.get_height() - 6), C_DIM)
-        text(surf, f.small, f"hız ×{self.speed:g}" + ("  DURAKLATILDI" if self.paused else ""), (vw - 10, 8), C_DIM, "topright")
+        text(surf, f.small, f"speed ×{self.speed:g}" + ("  PAUSED" if self.paused else ""), (vw - 10, 8), C_DIM, "topright")
 
     def draw_series(self, surf, rect, series, title):
         f = self.fonts
@@ -252,45 +252,45 @@ class EcoApp:
         pw, ph = surf.get_size()
         pygame.draw.line(surf, C_PANEL_LINE, (0, 0), (0, ph), 2)
         y = 8
-        text(surf, f.big, "EKOSİSTEM", (12, y), C_BEST)
+        text(surf, f.big, "ECOSYSTEM", (12, y), C_BEST)
         y += f.big.get_height() + 4
         s = w.stats()
         b = w.energy_balance()
-        for k, v in (("nüfus", f"{s['pop']}"), ("yem", f"{s['food']}"), ("toplam yenen", f"{s['eaten']}"),
-                     ("ölen (açlık)", f"{len(w.deaths)}"),
-                     ("doğum eşeysiz / eşeyli", f"{s['births_asex']} / {s['births_sex']}"),
-                     ("etçil / otçul", f"{s['carn']} / {s['pop'] - s['carn']}"),
-                     ("ısırık / öldürme", f"{s['bites']} / {s['kills']}"),
-                     ("leş (şimdi / yenen)", f"{s['carcasses']} / {s['carc_eaten']}"),
-                     ("soy (tohum 0/1/2/…)", " / ".join(str(int(x)) for x in np.bincount(w.lin, minlength=3)[:6])),
-                     ("nesil ort / en yüksek", f"{s['mean_gen']:.1f} / {s['max_gen']}"), ("ort. uzuv", f"{s['mean_limbs']:.1f}"),
-                     ("ort. hız", f"{s['mean_speed']:.2f} m/s"),
-                     ("giderler (hareket/bazal/üreme)", f"{b['move']:.0f} / {b['basal']:.0f} / {b['repro']:.0f}"),
-                     ("et enerjisi kazancı", f"{b['meat']:.0f}"),
-                     ("yemekten kazanç", f"{b['gained']:.0f}")):
+        for k, v in (("population", f"{s['pop']}"), ("food", f"{s['food']}"), ("total eaten", f"{s['eaten']}"),
+                     ("dead (starvation)", f"{len(w.deaths)}"),
+                     ("births asexual / sexual", f"{s['births_asex']} / {s['births_sex']}"),
+                     ("carnivore / herbivore", f"{s['carn']} / {s['pop'] - s['carn']}"),
+                     ("bites / kills", f"{s['bites']} / {s['kills']}"),
+                     ("carcasses (now / eaten)", f"{s['carcasses']} / {s['carc_eaten']}"),
+                     ("lineage (seed 0/1/2/…)", " / ".join(str(int(x)) for x in np.bincount(w.lin, minlength=3)[:6])),
+                     ("generation mean / max", f"{s['mean_gen']:.1f} / {s['max_gen']}"), ("mean limbs", f"{s['mean_limbs']:.1f}"),
+                     ("mean speed", f"{s['mean_speed']:.2f} m/s"),
+                     ("expenses (movement/basal/reproduction)", f"{b['move']:.0f} / {b['basal']:.0f} / {b['repro']:.0f}"),
+                     ("meat energy gain", f"{b['meat']:.0f}"),
+                     ("gain from eating", f"{b['gained']:.0f}")):
             text(surf, f.small, k, (12, y), C_DIM)
             text(surf, f.small, v, (pw - 12, y), C_TEXT, "topright")
             y += f.small.get_height() + 2
         y += 6
         gh = int(ph * 0.14)
-        self.draw_series(surf, pygame.Rect(12, y, pw - 24, gh), [("pop", C_BEST)], "nüfus")
+        self.draw_series(surf, pygame.Rect(12, y, pw - 24, gh), [("pop", C_BEST)], "population")
         y += gh + 6
-        self.draw_series(surf, pygame.Rect(12, y, pw - 24, gh), [("mean_energy", C_POS)], "ortalama enerji")
+        self.draw_series(surf, pygame.Rect(12, y, pw - 24, gh), [("mean_energy", C_POS)], "mean energy")
         y += gh + 10
         i = self.idx_of(self.sel) if self.sel is not None else None
         if i is None:
-            text(surf, f.small, "bir canlıya tıkla", (12, y), C_DIM)
+            text(surf, f.small, "click on a creature", (12, y), C_DIM)
             return
         g = w.genomes[i]
         sp = float(np.linalg.norm(w.st.v[i, 0]))
         pw_ = float(np.sum(np.abs(w.st.tau[i] * w.st.jvel[i]) * w.mm[i]))
-        text(surf, f.normal, f"canlı #{self.sel}", (12, y), (255, 220, 80))
+        text(surf, f.normal, f"creature #{self.sel}", (12, y), (255, 220, 80))
         y += f.normal.get_height() + 2
-        for k, v in (("nesil", f"{w.gen[i]}"), ("beslenme (0 otçul, 1 etçil)", f"{w.diet[i]:.2f}"), ("soy", f"{w.lin[i]}"), ("uzuv", f"{g.body.n}"), ("yaş", f"{w.t - w.born[i]:.0f} sn"),
-                     ("üreme isteği (eşeyli/eşeysiz)", f"{w.want[i, 0]:+.1f} / {w.want[i, 1]:+.1f}"), ("enerji", f"{w.energy[i]:.0f} / {w.cfg.e_max:.0f}"),
-                     ("kafa hızı", f"{sp:.2f} m/s"), ("mekanik güç", f"{pw_:.1f} W"),
-                     ("gider", f"{w.cfg.c_move * pw_ + w.cfg.c_basal * w.mass[i]:.2f} /sn"), ("kütle", f"{w.mass[i]:.1f} kg"),
-                     ("yem algısı", "var" if w.tmag[i] > 0 else "yok")):
+        for k, v in (("generation", f"{w.gen[i]}"), ("diet (0 herbivore, 1 carnivore)", f"{w.diet[i]:.2f}"), ("lineage", f"{w.lin[i]}"), ("limbs", f"{g.body.n}"), ("age", f"{w.t - w.born[i]:.0f} s"),
+                     ("reproduction request (sexual/asexual)", f"{w.want[i, 0]:+.1f} / {w.want[i, 1]:+.1f}"), ("energy", f"{w.energy[i]:.0f} / {w.cfg.e_max:.0f}"),
+                     ("head speed", f"{sp:.2f} m/s"), ("mechanical power", f"{pw_:.1f} W"),
+                     ("expense", f"{w.cfg.c_move * pw_ + w.cfg.c_basal * w.mass[i]:.2f} /s"), ("mass", f"{w.mass[i]:.1f} kg"),
+                     ("food sensed", "yes" if w.tmag[i] > 0 else "no")):
             text(surf, f.small, k, (12, y), C_DIM)
             text(surf, f.small, v, (pw - 12, y), C_TEXT, "topright")
             y += f.small.get_height() + 2
@@ -298,8 +298,8 @@ class EcoApp:
     def draw_bar(self, surf):
         surf.fill((10, 14, 20))
         w, h = surf.get_size()
-        s = ("SPACE turbo · P duraklat · +/- hız · tıkla seç · F takip · S kaydet · Z tüm dünya · R yeni dünya · H yardım"
-             if self.show_help else "H: yardım")
+        s = ("SPACE turbo · P pause · +/- speed · click select · F follow · S save · Z whole world · R new world · H help"
+             if self.show_help else "H: help")
         text(surf, self.fonts.small, s, (8, h // 2), C_DIM, "midleft")
 
     def draw_turbo(self, scr):
@@ -307,11 +307,11 @@ class EcoApp:
         W, H = scr.get_size()
         text(scr, f.huge, "TURBO", (W // 2, int(H * 0.08)), C_POS, "midtop")
         s = w.stats()
-        text(scr, f.big, f"t = {s['t']:.0f} s   nüfus {s['pop']}   yem {s['food']}   ort. enerji {s['mean_energy']:.0f}",
+        text(scr, f.big, f"t = {s['t']:.0f} s   pop {s['pop']}   food {s['food']}   mean energy {s['mean_energy']:.0f}",
              (W // 2, int(H * 0.3)), C_TEXT, "midtop")
-        text(scr, f.normal, "SPACE: geri dön", (W // 2, int(H * 0.38)), C_DIM, "midtop")
+        text(scr, f.normal, "SPACE: go back", (W // 2, int(H * 0.38)), C_DIM, "midtop")
         self.draw_series(scr, pygame.Rect(int(W * 0.08), int(H * 0.46), int(W * 0.84), int(H * 0.4)),
-                         [("pop", C_BEST)], "nüfus")
+                         [("pop", C_BEST)], "population")
 
 
 def write_log(world: World, out: str):
@@ -333,21 +333,21 @@ def write_log(world: World, out: str):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--headless", action="store_true")
-    ap.add_argument("--seconds", type=float, default=300.0, help="--headless için simülasyon süresi (sn)")
+    ap.add_argument("--seconds", type=float, default=300.0, help="simulation duration for --headless (s)")
     ap.add_argument("--n", type=int, default=100)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--size", type=float, default=40.0, help="dünya kenarı (m)")
+    ap.add_argument("--size", type=float, default=40.0, help="world side (m)")
     ap.add_argument("--sources", type=int, default=5)
-    ap.add_argument("--min-pop", type=int, default=0, help="nüfus bunun altına inerse hayatta kalanların mutasyonlu kopyaları eklenir (0=kapalı)")
-    ap.add_argument("--random", action="store_true", help="eğitilmiş canlılar yerine RASTGELE beyinli başlangıç (varsayılan: örnek canlılarla tohumla)")
-    ap.add_argument("--seed-from", nargs="+", default=None, help="başlangıç nüfusunu bu canlı JSON'larından üret (varsayılan: ornekler/ içindeki 3 canlı)")
+    ap.add_argument("--min-pop", type=int, default=0, help="if the population drops below this, mutated copies of survivors are added (0=off)")
+    ap.add_argument("--random", action="store_true", help="start with RANDOM brains instead of trained creatures (default: seed with the example creatures)")
+    ap.add_argument("--seed-from", nargs="+", default=None, help="create the initial population from these creature JSONs (default: the 3 creatures in examples/)")
     ap.add_argument("--out", default="runs/eco1")
     ap.add_argument("--window", default="1280x720")
     a = ap.parse_args()
     cfg = WorldConfig(n_init=a.n, seed=a.seed, size=a.size, n_sources=a.sources, min_pop=a.min_pop)
     here = os.path.dirname(os.path.abspath(__file__))
-    paths = None if a.random else (a.seed_from or [os.path.join(here, "ornekler", f) for f in
-                                                  ("denizanasi.json", "yilan.json", "ornek_simetrik_balik.json")])
+    paths = None if a.random else (a.seed_from or [os.path.join(here, "examples", f) for f in
+                                                  ("jellyfish.json", "snake.json", "example_symmetric_fish.json")])
 
     def make(c):
         if paths:
@@ -359,13 +359,13 @@ def main():
         w = make(cfg)
         run_headless(w, a.seconds, log=print)
         write_log(w, a.out)
-        print(f"bitti: nüfus {w.pop}, ölen {len(w.deaths)}, yenen yem {w.eaten_total} -> {a.out}")
+        print(f"done: population {w.pop}, dead {len(w.deaths)}, food eaten {w.eaten_total} -> {a.out}")
         return
     pygame.display.init()
     pygame.font.init()
     W, H = (int(v) for v in a.window.lower().split("x"))
     screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
-    pygame.display.set_caption("Evrimleşen Yüzücüler - Ekosistem")
+    pygame.display.set_caption("Evolving Swimmers - Ecosystem")
     app = EcoApp(screen, cfg, a.out, make)
     clock = pygame.time.Clock()
     while app.running:

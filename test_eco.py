@@ -1,4 +1,4 @@
-"""Ekosistem arayüzü testleri (başsız):  python test_eco.py  -> /tmp/shots/eco_*.png"""
+"""Ecosystem UI tests (headless):  python test_eco.py  -> /tmp/shots/eco_*.png"""
 import os, shutil, tempfile
 os.environ["SDL_VIDEODRIVER"] = "dummy"
 os.environ["SDL_AUDIODRIVER"] = "dummy"
@@ -26,7 +26,7 @@ def test_viewer():
     frames(app, 120)
     pygame.image.save(app.screen, os.path.join(SHOTS, "eco_1280x720.png"))
     w = app.world
-    # canlı seç (kafasının ekran konumuna tıkla)
+    # select a creature (click at its head's screen position)
     view, _, _ = app.layout()
     p = app.cam.w2s(w.st.x[3, 0], view.size)
     app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=(int(p[0]), int(p[1])), button=1))
@@ -48,14 +48,14 @@ def test_viewer():
         app.handle_event(pygame.event.Event(pygame.VIDEORESIZE, size=size, w=size[0], h=size[1]))
         frames(app, 3)
     app.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_r, mod=0)); frames(app, 3)
-    # soy tükenmesi çizimi
+    # soup depletion rendering
     app.world.energy[:] = -1; app.world._deaths(); frames(app, 3)
     assert app.world.pop == 0
     write_log(app.world, out)
-    print("[1] ekosistem arayüzü: çizim, seçim, takip, kaydetme, turbo, yeniden boyutlandırma, tükenme ekranı hatasız")
+    print("[1] ecosystem UI: drawing, selection, follow, saving, turbo, resizing, extinction screen all error-free")
     shutil.rmtree(out, ignore_errors=True)
 
 
 if __name__ == "__main__":
     test_viewer()
-    print("TAMAM ->", SHOTS)
+    print("DONE ->", SHOTS)

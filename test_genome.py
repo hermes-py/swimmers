@@ -1,4 +1,4 @@
-"""Faz 2 doğrulama testleri:  python test_genome.py"""
+"""Phase 2 validation tests:  python test_genome.py"""
 import os, tempfile, time
 import numpy as np
 from genome import *
@@ -8,16 +8,16 @@ from physics import *
 
 def test_random_and_mutation_validity():
     rng = np.random.default_rng(0)
-    cfg = MutationConfig(p_add=0.4, p_remove=0.3, p_mirror=0.3, p_gene=0.2)   # agresif
+    cfg = MutationConfig(p_add=0.4, p_remove=0.3, p_mirror=0.3, p_gene=0.2)   # aggressive
     g = random_genome(rng)
     sizes = []
     for _ in range(3000):
         g = mutate(g, rng, cfg)
         g.body.validate()
         sizes.append(g.body.n)
-    print(f"[1] 3000 agresif mutasyon sonrası genom geçerli | uzuv sayısı aralığı {min(sizes)}..{max(sizes)}")
+    print(f"[1] genome valid after 3000 aggressive mutations | limb count range {min(sizes)}..{max(sizes)}")
     assert max(sizes) <= MAX_LIMBS and min(sizes) >= MIN_LIMBS
-    assert max(sizes) > 10, "uzuv ekleme/simetri çalışmıyor gibi"
+    assert max(sizes) > 10, "limb addition/symmetry seems not to be working"
 
 
 def test_mirror_symmetry():
@@ -27,17 +27,17 @@ def test_mirror_symmetry():
         m = mirror_limb(b, rng)
         if m.n == b.n:
             continue
-        k = m.n - b.n                          # eklenen alt ağaç boyutu
+        k = m.n - b.n                          # size of the added subtree
         A = GRID["angle_steps"]
-        # eklenen ilk uzuv, kaynağın aynası olmalı: theta' = -theta, lo<->hi
+        # the first added limb must be the mirror of the source: theta' = -theta, lo<->hi
         src = [i for i in range(b.first_free, b.n + 1)
                if (A - b.theta[i]) % A == m.theta[b.n + 1] and b.hi[i] == m.lo[b.n + 1]
                and b.lo[i] == m.hi[b.n + 1] and b.parent[i] == m.parent[b.n + 1]]
-        assert src, "ayna uzuv bulunamadı"
+        assert src, "mirror limb not found"
         m.validate()
-        print(f"[2] ayna simetri OK (alt ağaç boyutu {k})")
+        print(f"[2] mirror symmetry OK (subtree size {k})")
         return
-    raise AssertionError("hiç ayna üretilemedi")
+    raise AssertionError("no mirror could be produced")
 
 
 def test_crossover():
@@ -47,7 +47,7 @@ def test_crossover():
         c = crossover(a, b, rng)
         c.body.validate()
         assert c.brain.W1.shape == (N_IN, HIDDEN)
-    print("[3] 300 çaprazlama geçerli")
+    print("[3] 300 crossovers valid")
 
 
 def test_json_roundtrip():
@@ -61,7 +61,7 @@ def test_json_roundtrip():
         assert np.array_equal(getattr(g.body, f), getattr(h.body, f)), f
     assert np.allclose(g.brain.W1, h.brain.W1) and np.allclose(g.brain.W2, h.brain.W2)
     assert h.meta["generation"] == 12
-    print(f"[4] JSON kaydet/yükle birebir | dosya {os.path.getsize(p)/1024:.0f} KB")
+    print(f"[4] JSON save/load exact | file {os.path.getsize(p)/1024:.0f} KB")
 
 
 def test_brain_and_closed_loop():
@@ -76,17 +76,17 @@ def test_brain_and_closed_loop():
     t0 = time.time()
     for _ in range(500):
         ctrl = act(st, bd, bb, target)
-        assert np.all(ctrl[~mm] == 0), "motorsuz/boş yuvalara komut gitmemeli"
+        assert np.all(ctrl[~mm] == 0), "no commands should go to motorless/empty slots"
         step(st, bd, ctrl, pp)
     assert np.isfinite(st.x).all() and np.isfinite(st.v).all()
     err = constraint_error(st, bd).max()
-    print(f"[5] 32 rastgele canlı, kapalı döngü 5 sn: sonlu, kemik hatası {err:.3f}, {(time.time()-t0):.1f} sn")
-    # hedef gövde çerçevesinde: phi'yi döndürünce gözlem tutarlı olmalı
+    print(f"[5] 32 random creatures, closed loop 5 s: finite, bone error {err:.3f}, {(time.time()-t0):.1f} s")
+    # target is in the body frame: observation must be consistent when phi is rotated
     obs = observe(st, bd, np.full(bd.B, 0.0))
     ang = np.arctan2(obs[:, 73], obs[:, 72])
     exp = (0.0 - st.phi + np.pi) % (2 * np.pi) - np.pi
     assert np.allclose(np.cos(ang), np.cos(exp), atol=1e-6) and np.allclose(np.sin(ang), np.sin(exp), atol=1e-6)
-    print("[5] hedef yön gövde çerçevesine doğru çevriliyor")
+    print("[5] target direction is correctly converted to the body frame")
 
 
 def test_spine_flag_survives():
@@ -101,17 +101,17 @@ def test_spine_flag_survives():
     p = os.path.join(tempfile.mkdtemp(), "s.json")
     save_json(g, p)
     assert load_json(p).body.legacy_spine
-    d = g.to_dict(); d["body"].pop("legacy_spine")                  # eski dosya: bayrak yok -> ESKİ mod (davranış korunur)
+    d = g.to_dict(); d["body"].pop("legacy_spine")                  # old file: no flag -> OLD mode (behavior preserved)
     assert Genome.from_dict(d).body.legacy_spine
-    assert not random_genome(rng).body.legacy_spine and not blank_body().legacy_spine   # yeni canlılar: kafa yönü
+    assert not random_genome(rng).body.legacy_spine and not blank_body().legacy_spine   # new creatures: head direction
     bd = build_bodies([g, random_genome(rng)])
     assert list(bd.legacy_spine) == [True, False] and not motor_mask(bd)[0, 1] and motor_mask(bd)[1, 1]
-    assert not motor_mask(bd)[1, bd.N - 1], "burun motorsuz"
-    print("[6] legacy_spine bayrağı mutasyon, çaprazlama, JSON ve eski dosyalarda doğru; varsayılan yeni mod")
+    assert not motor_mask(bd)[1, bd.N - 1], "nose has no motor"
+    print("[6] legacy_spine flag correct across mutation, crossover, JSON and old files; new mode is default")
 
 
 def test_bone1_is_ordinary_in_nose_mode():
-    """Yeni modda kemik 1 silinebilir/aynalanabilir; eski modda hâlâ korunur. Uzuv sayısı 1'e inebilir, fizik çalışır."""
+    """In the new mode bone 1 can be deleted/mirrored; in the old mode it is still protected. Limb count can drop to 1, physics works."""
     rng = np.random.default_rng(8)
     b = random_body(rng, 4, 6)
     assert not b.legacy_spine and b.first_free == 1
@@ -124,7 +124,7 @@ def test_bone1_is_ordinary_in_nose_mode():
     assert m is not None
     m[0].validate()
     A = GRID["angle_steps"]
-    assert (m[0].theta[m[1][1]] + b.theta[1]) % A == 0, "ayna: açı ters işaretli"
+    assert (m[0].theta[m[1][1]] + b.theta[1]) % A == 0, "mirror: angle has opposite sign"
     leg = b.copy(); leg.legacy_spine = True
     assert delete_subtree(leg, 1) is None and mirror_at(leg, 1) is None
     cfg = MutationConfig(p_add=0.2, p_remove=0.6, p_mirror=0.3, p_gene=0.2, min_limbs=1)
@@ -134,7 +134,7 @@ def test_bone1_is_ordinary_in_nose_mode():
         g = mutate(g, rng, cfg)
         g.body.validate()
         seen.add(g.body.n)
-    assert 1 in seen, "uzuv sayısı 1'e inebilmeli"
+    assert 1 in seen, "limb count must be able to drop to 1"
     one = Genome(blank_body(), random_brain(rng))
     r = delete_subtree(one.body, 2) 
     assert r is not None and r[0].n == 1
@@ -144,7 +144,7 @@ def test_bone1_is_ordinary_in_nose_mode():
     for _ in range(300):
         step(st, bd, act(st, bd, bb, np.array([0.0])), PhysicsParams())
     assert np.isfinite(st.x).all()
-    print("[7] yeni modda kemik 1 sıradan uzuv: silinir, aynalanır, uzuv sayısı 1'e iner; eski modda korunur")
+    print("[7] in the new mode bone 1 is an ordinary limb: deletable, mirrorable, limb count drops to 1; protected in the old mode")
 
 
 if __name__ == "__main__":
@@ -155,4 +155,4 @@ if __name__ == "__main__":
     test_brain_and_closed_loop()
     test_spine_flag_survives()
     test_bone1_is_ordinary_in_nose_mode()
-    print("TAMAM")
+    print("DONE")

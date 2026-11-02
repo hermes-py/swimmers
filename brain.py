@@ -1,16 +1,16 @@
 """
-Faz 2 - Algılar ve beyin ileri geçişi (popülasyon vektörize).
+Phase 2 - Senses and brain forward pass (population-vectorized).
 
-Girdi vektörü (N_IN = 79):
-    [0:24]   eklem açıları (dinlenmeye göre, sınır aralığına normalize)
-    [24:48]  eklem açısal hızları (tanh ölçekli)
-    [48:72]  uzuv yuvası maskesi (1 = bu yuvada gerçek uzuv var)
-    [72:74]  hedef yön, GÖVDE çerçevesinde birim vektör (x ileri); (0,0) = komut yok / dur
-    [74:76]  gövde çerçevesinde COM hızı (tanh ölçekli)
-    [76]     gövde açısal hızı (tanh ölçekli)
-    [77:79]  saat sin/cos (ritmi hazır vermez, sadece zaman bilgisi)
-Çıktı: 24 motor komutu (tanh -> [-1,1]); motorlu olmayan yuvalar sıfırlanır (motor_mask).
-Yuva s, kemik/nokta s+1'e karşılık gelir.
+Input vector (N_IN = 79):
+    [0:24]   joint angles (relative to rest, normalized to the limit range)
+    [24:48]  joint angular velocities (tanh-scaled)
+    [48:72]  limb slot mask (1 = a real limb exists in this slot)
+    [72:74]  target direction, unit vector in the BODY frame (x forward); (0,0) = no command / stop
+    [74:76]  COM velocity in the body frame (tanh-scaled)
+    [76]     body angular velocity (tanh-scaled)
+    [77:79]  clock sin/cos (does not hand over the rhythm, only time information)
+Output: 24 motor commands (tanh -> [-1,1]); slots without a motor are zeroed (motor_mask).
+Slot s corresponds to bone/point s+1.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from genome import BrainGenome, N_IN, HIDDEN, N_OUT, N_SLOTS
 from physics import Bodies, State, com_velocity, motor_mask
 
 CLOCK_HZ = 1.0
-VEL_SCALE = 1.0       # COM hızı normalizasyonu
+VEL_SCALE = 1.0       # COM velocity normalization
 JVEL_SCALE = 4.0
 OMEGA_SCALE = 2.0
 
@@ -45,11 +45,11 @@ def _to_body_frame(vec, phi):
 
 
 def observe(st: State, bd: Bodies, target_angle: np.ndarray, target_mag=None) -> np.ndarray:
-    """target_angle (B,): DÜNYA çerçevesinde hedef yön açısı (WASD'den gelir). Dönüş: (B,N_IN).
-    target_mag (B,) 1 = komut var, 0 = KOMUT YOK (dur). Verilmezse 1.
-    bd.N < 25 ise kullanılmayan yuvalar sıfırla doldurulur."""
+    """target_angle (B,): target direction angle in the WORLD frame (comes from WASD). Returns: (B,N_IN).
+    target_mag (B,) 1 = command present, 0 = NO COMMAND (stop). Defaults to 1 if not given.
+    If bd.N < 25, unused slots are filled with zeros."""
     B = bd.B
-    sl = slice(1, bd.N - 1)                          # son nokta (burun / dolgu) uzuv yuvası değil
+    sl = slice(1, bd.N - 1)                          # the last point (nose / padding) is not a limb slot
     rng_ = np.maximum(np.maximum(-bd.jlo[:, sl], bd.jhi[:, sl]), 0.1)
     theta = np.clip(st.theta[:, sl] / rng_, -1.5, 1.5)
     jvel = np.tanh(st.jvel[:, sl] / JVEL_SCALE)
@@ -73,14 +73,14 @@ def observe(st: State, bd: Bodies, target_angle: np.ndarray, target_mag=None) ->
 
 def forward(bb: BrainBatch, obs: np.ndarray) -> np.ndarray:
     n_in = bb.W1.shape[1]
-    if obs.shape[1] < n_in:                    # v2 beyin v1 gözlemiyle çalışırsa fazladan girişler 0
+    if obs.shape[1] < n_in:                    # if a v2 brain runs with v1 observations, the extra inputs are 0
         obs = np.pad(obs, ((0, 0), (0, n_in - obs.shape[1])))
     h = np.tanh(np.einsum("bi,bih->bh", obs, bb.W1) + bb.b1)
     return np.tanh(np.einsum("bh,bho->bo", h, bb.W2) + bb.b2)
 
 
 def act(st: State, bd: Bodies, bb: BrainBatch, target_angle: np.ndarray, target_mag=None) -> np.ndarray:
-    """Fizik adımına verilecek (B,N) komut dizisi. [:,0] ve motorsuz kemikler 0."""
+    """(B,N) command array to feed to the physics step. [:,0] and motorless bones are 0."""
     out = forward(bb, observe(st, bd, target_angle, target_mag))
     ctrl = np.zeros((bd.B, bd.N))
     ctrl[:, 1:bd.N - 1] = out[:, :bd.N - 2]
@@ -88,8 +88,9 @@ def act(st: State, bd: Bodies, bb: BrainBatch, target_angle: np.ndarray, target_
 
 
 def act2(st: State, bd: Bodies, bb: BrainBatch, target_angle: np.ndarray, target_mag: np.ndarray, extra: np.ndarray):
-    """Beyin v2 (ekosistem). extra (B,6): [yem yakınlığı, kendi enerjisi, canlı yönü x/y (gövde çerçevesi), canlı yakınlığı,
-    canlının enerjisi]. Dönüş: (ctrl (B,N), istekler (B,3) = [eşeyli üreme, eşeysiz üreme, ısırma], hepsi [-1,1])."""
+    """Brain v2 (ecosystem). extra (B,6): [food proximity, own energy, other creature direction x/y (body frame),
+    other creature proximity, other creature's energy]. Returns: (ctrl (B,N), requests (B,3) = [sexual reproduction,
+    asexual reproduction, bite], all in [-1,1])."""
     obs = np.concatenate([observe(st, bd, target_angle, target_mag), extra], axis=1)
     out = forward(bb, obs)
     ctrl = np.zeros((bd.B, bd.N))

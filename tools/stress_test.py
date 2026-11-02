@@ -14,5 +14,5 @@ def run(legacy, seed=11, n=48, steps=1000):
         for k in range(steps): step(st,bd,act(st,bd,bb,np.full(n,.5)),pp)
     bad=~np.isfinite(st.x).all(axis=(1,2)) | (constraint_error(st,bd)>0.5)
     return int(bad.sum()), n, float(np.nanmedian(constraint_error(st,bd)))
-print("ESKİ mod: patlayan/bozuk", run(True))
-print("YENİ mod: patlayan/bozuk", run(False))
+print("OLD mode: exploded/broken", run(True))
+print("NEW mode: exploded/broken", run(False))

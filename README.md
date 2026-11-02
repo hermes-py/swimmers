@@ -5,9 +5,6 @@ Creatures made of a head, rod-like limbs and joints learn to swim in a simulated
 while the genome also shapes limb count, lengths, angles and masses.
 No movement is hard-coded. Swimming emerges only from joint torques and water drag.
 
-<!-- Drag your demo video into this editor on GitHub, or paste the YouTube link here -->
-[DEMO VIDEO]
-
 ## Highlights
 
 - Custom 2D physics engine in NumPy (top-down view, no gravity, viscous anisotropic drag)
@@ -26,37 +23,36 @@ pip install numpy pygame
 python app.py
 
 # Try a pre-trained creature right away and steer it with WASD
-python app.py --load ornekler/denizanasi.json
+python app.py --load examples/jellyfish.json
 ```
-
-> `ornekler/` is Turkish for "examples".
 
 ### Example creatures
 
 | File | Description |
 |------|-------------|
-| `denizanasi.json` (jellyfish) | 5 limbs, branching body, ~1.1 m/s in all 8 directions |
-| `yilan.json` (snake) | 6-limb chain, fast forward (~0.85 m/s), weak backwards/sideways |
-| `ornek_simetrik_balik.json` (symmetric fish) | 6-limb symmetric chain, swims with a wave, ~0.51 m/s average over 8 directions |
-| `ornek_tasarim_balik.json` (design fish) | Starting design for the editor (random brain) |
+| `jellyfish.json` | 5 limbs, branching body, ~1.1 m/s in all 8 directions |
+| `snake.json` | 6-limb chain, fast forward (~0.85 m/s), weak backwards/sideways |
+| `example_symmetric_fish.json` | 6-limb symmetric chain, swims with a wave, ~0.51 m/s average over 8 directions |
+| `example_design_fish.json` | Starting design for the editor (random brain) |
 
-Files trained with older physics versions are tagged `[eski fizik]` ("old physics") and behave differently.
+Files trained with older physics versions are tagged `[old physics]` and behave differently.
 
 ## Training
 
 ```bash
 # Train from scratch
-python train.py --out runs/deney1 --workers 4
+python train.py --out runs/test1 --workers 4
 
 # Train from a design: body is frozen, only the brain evolves
-python train.py --out runs/d2 --seed-from ornekler/ornek_tasarim_balik.json --freeze-body
+python train.py --out runs/d2 --seed-from examples/example_design_fish.json --freeze-body
 ```
 
 | Tool | Purpose |
 |------|---------|
 | `python validate.py file.json` | Checks that speed does not depend on the physics time step |
 | `python eval_dirs.py file.json` | Performance in 8 directions + validation |
-| `python test_physics.py`, `test_genome.py`, `test_evolution.py`, `test_app.py` | Test suites |
+| `python test_physics.py`, `test_genome.py`, `test_evolution.py`, `test_app.py` | Test suites (creatures and UI) |
+| `python test_world.py`, `test_eco.py` | Test suites (ecosystem) |
 
 ## How it works
 
@@ -76,8 +72,9 @@ An older "legacy spine" mode (bone 1 passive, defines heading) is still supporte
 - Evolution acts on body and brain weights together
 
 ### Curriculum
-Difficulty adapts automatically: stage 0 = forward only, stages 1-8 = widening direction range (±22.5° up to 180°), stage 9 = direction changes. If the champion is good enough, difficulty rises; if it is very bad for long, it steps back.
-"No command = stop" (stage 10) is currently disabled; enable with `--stop-command`.
+Difficulty adapts automatically through numbered notches: notch 0 = forward only, notches 1-8 = widening direction range (±22.5° up to ±180°), notch 9 = direction changes.
+The difficulty rises by one notch when the champion performs well for several generations in a row; if it performs very badly for long enough, it steps back one notch.
+"No command = stop" (notch 10) is currently disabled; enable with `--stop-command`.
 
 ### Stall prevention
 - **Reward gate:** energy, spin and jitter penalties only count in full once the creature really moves, so "standing still" is never selected.
@@ -94,9 +91,9 @@ python eco.py --random                   # random brains (they starve before lea
 
 Tests: `python test_world.py`, `python test_eco.py`.
 
-- **Stage 1: Food.** Sources emit food at a constant rate and slowly drift. Eating gives energy. Movement costs real mechanical power, plus a base cost per mass. Zero energy means death. The nearest food direction feeds the brain's target-direction input.
-- **Stage 2: Reproduction.** Brain v2 has 85 inputs and 27 outputs (24 motors plus sexual reproduction, asexual reproduction and bite). Asexual: parent pays 80 energy, child starts with 40. Sexual: two willing creatures within 2 m pay 30 each, child is a crossover plus mutation. Maturation takes 5 s.
-- **Stage 3: Predation (not yet tuned).** Each creature has a diet gene in [0, 1] (0 herbivore, 1 carnivore) with a specialization cost. Bites capture prey energy, and kills leave carcasses that rot after 60 s. Energy is conserved (`World.balance_residual()` stays near 0, covered by tests).
+- **Part 1: Food.** Sources emit food at a constant rate and slowly drift. Eating gives energy. Movement costs real mechanical power, plus a base cost per mass. Zero energy means death. The nearest food direction feeds the brain's target-direction input.
+- **Part 2: Reproduction.** Brain v2 has 85 inputs and 27 outputs (24 motors plus sexual reproduction, asexual reproduction and bite). Asexual: parent pays 160 energy, child starts with 80. Sexual: two willing creatures within 2 m pay 60 each, child is a crossover plus mutation. Maturation takes 5 s.
+- **Part 3: Predation (not yet tuned).** Each creature has a diet gene in [0, 1] (0 herbivore, 1 carnivore) with a specialization cost. Bites capture prey energy, and kills leave carcasses that rot after 60 s. Energy is conserved (`World.balance_residual()` stays near 0, covered by tests).
 
 Everything is configurable via `WorldConfig`.
 

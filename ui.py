@@ -1,4 +1,4 @@
-"""Ortak arayüz yardımcıları: renkler, yazı tipleri, ok/metin çizimi, canlı çizimi."""
+"""Shared UI helpers: colors, fonts, arrow/text drawing, creature drawing."""
 from __future__ import annotations
 
 import math
@@ -7,7 +7,7 @@ import numpy as np
 import pygame
 
 # --------------------------------------------------------------------------- #
-#  Renkler
+#  Colors
 # --------------------------------------------------------------------------- #
 C_BG_TOP, C_BG_BOT = (10, 38, 66), (4, 16, 34)
 C_GRID_MINOR, C_GRID_MAJOR = (18, 58, 92), (30, 84, 126)
@@ -19,7 +19,7 @@ C_POS, C_NEG = (255, 150, 60), (90, 140, 255)
 C_BEST, C_MEAN = (90, 230, 120), (255, 170, 70)
 
 
-HEAD_UP = math.pi / 2     # başlangıç gövde yönü: kafa YUKARI bakar (W = yukarı ile tutarlı)
+HEAD_UP = math.pi / 2     # initial body direction: head faces UP (consistent with W = up)
 
 
 def deg(a):
@@ -31,7 +31,7 @@ def wrap_pi(a):
 
 
 # --------------------------------------------------------------------------- #
-#  Yazı tipleri (pencere yüksekliğine göre ölçeklenir)
+#  Fonts (scale with window height)
 # --------------------------------------------------------------------------- #
 class Fonts:
     NAMES = "segoeui,arial,dejavusans,freesans,helvetica,verdana"
@@ -68,15 +68,15 @@ def arrow(surf, color, p0, p1, width=3, head=9):
 
 
 def draw_creature(surf, sess, cam, wh):
-    """Bir oturumdaki (Session) canlıyı kameraya göre çizer. Komuta göre kemikler turuncu/mavi renklenir.
-    Batch içinde dolgulu (kullanılmayan noktalı) canlılar için de çalışır: yalnızca etkin noktalar çizilir."""
+    """Draws the creature in a session (Session) relative to the camera. Bones are tinted orange/blue according to the command.
+    Also works for padded creatures within a batch (with unused points): only active points are drawn."""
     sc = cam.scale
     bd, st = sess.bd, sess.st
     x = st.x[0]
     par = bd.parent[0]
     ctrl = sess.ctrl[0]
     legacy = bool(bd.legacy_spine[0])
-    nose = None if legacy else int(bd.N - 1)           # yeni modda son nokta = burun (görünmez yön taşıyıcısı)
+    nose = None if legacy else int(bd.N - 1)           # in the new mode the last point = nose (invisible direction carrier)
     idx = [int(i) for i in np.nonzero(bd.active[0])[0]]
     S = {i: cam.w2s(x[i], wh) for i in idx}
     limbs = [i for i in idx if i > 0 and i != nose]

@@ -1,4 +1,4 @@
-"""Arayüz testleri (başsız/dummy sürücü):  python test_app.py [canlı.json]   -> /tmp/shots/*.png"""
+"""UI tests (headless/dummy driver):  python test_app.py [creature.json]   -> /tmp/shots/*.png"""
 import os, sys, time, math, shutil, tempfile
 os.environ["SDL_VIDEODRIVER"] = "dummy"
 os.environ["SDL_AUDIODRIVER"] = "dummy"
@@ -57,12 +57,12 @@ def test_play_controls(load):
     out = tempfile.mkdtemp()
     app = make_app((1280, 720), train=False, load=load, out=out)
     assert app.mode == MODE_PLAY
-    assert abs(app.play.tele["heading"] - math.pi / 2) < 1e-6, "başlangıçta kafa yukarı bakmalı (90°)"
-    # --- dünya kontrolü ---
+    assert abs(app.play.tele["heading"] - math.pi / 2) < 1e-6, "head must face up (90°) at the start"
+    # --- world control ---
     frames(app, 120, keys=[pygame.K_w, pygame.K_d])
     assert abs(math.degrees(app.play.tele["target"]) - 45) < 1e-6
     shot(app, "play_1280x720.png")
-    print(f"[1] DÜNYA: W+D -> hedef 45°, hız {speed(app):.2f} m/s")
+    print(f"[1] WORLD: W+D -> target 45°, speed {speed(app):.2f} m/s")
     # --- K / L ---
     app.rescan()
     app.select_library(0)
@@ -71,41 +71,41 @@ def test_play_controls(load):
     assert app.lib_idx == (n0 + 1) % len(app.library)
     key(app, pygame.K_k)
     assert app.lib_idx == n0
-    print(f"[1] K/L kütüphane gezinmesi OK ({len(app.library)} canlı)")
-    # --- tank kontrolü ---
+    print(f"[1] K/L library navigation OK ({len(app.library)} creatures)")
+    # --- tank control ---
     key(app, pygame.K_m)
     assert app.scheme == "tank"
     frames(app, 30, keys=[pygame.K_w])
-    assert abs(angdiff(app.target, app.play.tele["heading"])) < 0.2          # gövde yalpalar: bir kare gecikmeli
+    assert abs(angdiff(app.target, app.play.tele["heading"])) < 0.2          # body yaws: one frame of lag
     frames(app, 30, keys=[pygame.K_a])
-    assert abs(angdiff(app.target, app.play.tele["heading"] + math.pi / 2)) < 0.2     # A: sola (+90°)
+    assert abs(angdiff(app.target, app.play.tele["heading"] + math.pi / 2)) < 0.2     # A: left (+90°)
     frames(app, 30, keys=[pygame.K_s])
-    assert abs(angdiff(app.target, app.play.tele["heading"] + math.pi)) < 0.2         # S: geri
+    assert abs(angdiff(app.target, app.play.tele["heading"] + math.pi)) < 0.2         # S: backward
     frames(app, 30, keys=[pygame.K_w, pygame.K_d])
     assert abs(angdiff(app.target, app.play.tele["heading"] - math.pi / 4)) < 0.2     # W+D: -45°
     shot(app, "play_tank.png")
-    print("[1] TANK: W=ön, S=arka, A=+90° (sol), W+D=-45° (gövdeye göre) OK")
-    # --- tuş yokken dur ---
+    print("[1] TANK: W=front, S=back, A=+90° (left), W+D=-45° (relative to the body) OK")
+    # --- stop when no keys ---
     key(app, pygame.K_m)
-    assert app.scheme == "dünya"
+    assert app.scheme == "world"
     frames(app, 600, keys=[pygame.K_d])
     v0 = speed(app)
     frames(app, 1200, keys=[])
     v1 = speed(app)
     assert not app.play.tele["active"] and np.all(app.play.ctrl == 0)
-    print(f"[1] BOŞTA (motor kes): hız {v0:.2f} -> {v1:.3f} m/s (20 sn sonra), motor komutları sıfır")
-    assert v1 < max(0.5 * v0, 0.03), (v0, v1)        # süzülme: 20 sn sonra hız en az yarıya inmeli
+    print(f"[1] IDLE (motors cut): speed {v0:.2f} -> {v1:.3f} m/s (after 20 s), motor commands zero")
+    assert v1 < max(0.5 * v0, 0.03), (v0, v1)        # coasting: speed must drop by at least half after 20 s
     key(app, pygame.K_g)
-    assert app.idle == "beyin"
+    assert app.idle == "brain"
     frames(app, 30, keys=[])
     assert app.play.mag == 0.0 and not app.play.tele["active"]
     shot(app, "play_idle_brain.png")
-    print("[1] BOŞTA (beyin): beyne komut yok (0) veriliyor; hedef oku gizli")
+    print("[1] IDLE (brain): brain is given no command (0); target arrow hidden")
     for size in ((800, 500), (1920, 1080), (640, 400)):
         app.screen = pygame.display.set_mode(size, pygame.RESIZABLE)
         app.handle_event(pygame.event.Event(pygame.VIDEORESIZE, size=size, w=size[0], h=size[1]))
         frames(app, 5, keys=[pygame.K_w])
-    print("[1] yeniden boyutlandırma hatasız")
+    print("[1] resizing error-free")
     app.close()
     shutil.rmtree(out, ignore_errors=True)
 
@@ -138,26 +138,26 @@ def sp(app, i):
 def test_editor(load):
     out = tempfile.mkdtemp()
     app = make_app((1280, 720), train=False, load=load, out=out)
-    key(app, pygame.K_TAB)                                  # DENE -> EDİTÖR
+    key(app, pygame.K_TAB)                                  # PLAY -> EDITOR
     assert app.mode == MODE_EDIT
     ed = app.editor
     frames(app, 3)
     shot(app, "editor_open.png")
-    print(f"[2] editör açıldı: {ed.name}, {ed.body.n} uzuv")
+    print(f"[2] editor opened: {ed.name}, {ed.body.n} limbs")
 
-    key(app, pygame.K_n); frames(app, 2)                    # boş canlı: kafa + omurga + kuyruk
+    key(app, pygame.K_n); frames(app, 2)                    # empty creature: head + spine + tail
     n1 = ed.body.n
     assert n1 == 2
     click(app, sp(app, n1)); assert ed.sel == n1
     tip = ed.pos()[n1]
-    click(app, w2s(app, tip + np.array([0.52, 0.0])))          # kuyruk ucunun sağına
+    click(app, w2s(app, tip + np.array([0.52, 0.0])))          # to the right of the tail tip
     assert ed.body.n == n1 + 1 and ed.sel == n1 + 1, (ed.body.n, ed.sel)
     ed.body.validate()
     new = ed.sel
     L = level_value("length", int(ed.body.length[new]))
     assert abs(L - 0.5) < 0.06, L
     assert abs(np.hypot(*(ed.pos()[new] - ed.pos()[n1])) - L) < 1e-6
-    print(f"[2] boşa tık -> uzuv eklendi (uzunluk {L:.2f} m, açı {math.degrees(level_value('theta', int(ed.body.theta[new]))):.0f}°)")
+    print(f"[2] click on empty space -> limb added (length {L:.2f} m, angle {math.degrees(level_value('theta', int(ed.body.theta[new]))):.0f}°)")
 
     before = (int(ed.body.theta[new]), int(ed.body.length[new]))
     dst = ed.pos()[n1] + np.array([0.82, 0.0])
@@ -165,7 +165,7 @@ def test_editor(load):
     after = (int(ed.body.theta[new]), int(ed.body.length[new]))
     assert after != before
     assert level_value("length", after[1]) in (0.7, 0.85), after
-    print(f"[2] sürükle: (açı,uzunluk) kademesi {before} -> {after} (gride yapıştı)")
+    print(f"[2] drag: (angle,length) level {before} -> {after} (snapped to grid)")
 
     key(app, pygame.K_z, pygame.KMOD_CTRL)
     assert (int(ed.body.theta[new]), int(ed.body.length[new])) == before
@@ -183,24 +183,24 @@ def test_editor(load):
             l0 = int(ed.body.length[new])
             click(app, (panel.x + plus.centerx, panel.y + plus.centery))
             assert int(ed.body.length[new]) == min(l0 + 1, len(GRID["length"]) - 1)
-    print("[2] ↑/↓ ve panel '+' düğmesi özellik değiştiriyor")
+    print("[2] ↑/↓ and the panel '+' button change the property")
 
     n_before = ed.body.n
     click(app, sp(app, new), button=3)
     assert ed.body.n == n_before - 1
     ed.body.validate()
     key(app, pygame.K_z, pygame.KMOD_CTRL); assert ed.body.n == n_before
-    print("[2] sağ tık silme + geri alma OK")
+    print("[2] right-click delete + undo OK")
 
     view, panel, _ = app.layout()
     buttons, rows, _ = ed.layout_panel(panel)
     for r, label, fn in buttons:
-        if label.startswith("Simetri"):
+        if label.startswith("Symmetry"):
             click(app, (panel.x + r.centerx, panel.y + r.centery))
     assert ed.sym
     click(app, sp(app, 0)); assert ed.sel == 0
     nb = ed.body.n
-    click(app, w2s(app, ed.pos()[0] + np.array([0.5, 0.0])))          # kafanın yanına (eksenin dışına)
+    click(app, w2s(app, ed.pos()[0] + np.array([0.5, 0.0])))          # beside the head (off the axis)
     assert ed.body.n == nb + 2, (ed.body.n, nb)
     a, b = nb + 1, nb + 2
     A = GRID["angle_steps"]
@@ -210,29 +210,29 @@ def test_editor(load):
     ed.prop = "length"; ed.sel = a
     key(app, pygame.K_UP)
     assert ed.body.length[a] == ed.body.length[b]
-    print("[2] simetri: eşleşen ayna uzuv eklendi, özellik değişimi eşine yansıyor")
+    print("[2] symmetry: matching mirror limb added, property change is reflected on its pair")
     ed.sel = a; nm = ed.body.n
     key(app, pygame.K_m)
     assert ed.body.n == nm + 1
     ed.body.validate()
     frames(app, 2); shot(app, "editor_symmetry.png")
 
-    assert not ed.body.legacy_spine and motor_mask_ok(ed)           # varsayılan: kafa yönü, kemik 1 motorlu
+    assert not ed.body.legacy_spine and motor_mask_ok(ed)           # default: head direction, bone 1 motorized
     key(app, pygame.K_o); assert ed.body.legacy_spine and not motor_mask_ok(ed)
     frames(app, 2); shot(app, "editor_legacy_spine.png")
     key(app, pygame.K_z, pygame.KMOD_CTRL); assert not ed.body.legacy_spine
-    print("[2] gövde yönü = kafa (varsayılan); O ile eski omurga moduna geçiliyor, geri alınabiliyor")
+    print("[2] body direction = head (default); O switches to the old spine mode, undoable")
     key(app, pygame.K_t); assert ed.test is not None
     frames(app, 240)
     assert np.isfinite(ed.test.st.x).all()
     shot(app, "editor_test.png")
-    print(f"[2] yüzme testi çalışıyor (hız {ed.test.tele['speed']:.2f} m/s)")
+    print(f"[2] swim test works (speed {ed.test.tele['speed']:.2f} m/s)")
     key(app, pygame.K_v); key(app, pygame.K_e)
     key(app, pygame.K_t); assert ed.test is None
 
     key(app, pygame.K_s, pygame.KMOD_CTRL)
     files = [f for f in os.listdir(out) if f.startswith("design_")]
-    assert files, "kayıt oluşmadı"
+    assert files, "save was not created"
     from genome import load_json
     g = load_json(os.path.join(out, files[0])); g.body.validate()
     assert any(it["name"].startswith("design_") for it in app.library)
@@ -240,7 +240,7 @@ def test_editor(load):
     assert app.mode == MODE_PLAY and app.play.genome.body.n == ed.body.n
     frames(app, 30, keys=[pygame.K_w]); assert np.isfinite(app.play.st.x).all()
     shot(app, "play_designed.png")
-    print(f"[2] kaydedildi ({files[0]}), DENE modunda açıldı, WASD ile çalışıyor")
+    print(f"[2] saved ({files[0]}), opened in PLAY mode, works with WASD")
     key(app, pygame.K_e)
     app.screen = pygame.display.set_mode((800, 500), pygame.RESIZABLE)
     app.handle_event(pygame.event.Event(pygame.VIDEORESIZE, size=(800, 500), w=800, h=500))
@@ -257,17 +257,17 @@ def test_nose_bone1_deletable(load):
     key(app, pygame.K_n); frames(app, 2)
     assert ed.body.n == 2 and not ed.body.legacy_spine
     click(app, sp(app, 0)); assert ed.sel == 0
-    click(app, w2s(app, ed.pos()[0] + np.array([0.5, 0.0])))      # kafaya yeni uzuv (kemik 3)
+    click(app, w2s(app, ed.pos()[0] + np.array([0.5, 0.0])))      # new limb on the head (bone 3)
     assert ed.body.n == 3 and ed.body.parent[3] == 0
-    click(app, sp(app, 1), button=3)                              # kemik 1 + alt ağacı (kemik 2) silinir
+    click(app, sp(app, 1), button=3)                              # bone 1 + its subtree (bone 2) are deleted
     assert ed.body.n == 1, ed.body.n
     ed.body.validate()
     key(app, pygame.K_z, pygame.KMOD_CTRL); assert ed.body.n == 3
-    key(app, pygame.K_o); assert ed.body.legacy_spine           # eski modda kemik 1 hâlâ korunur
+    key(app, pygame.K_o); assert ed.body.legacy_spine           # in the old mode bone 1 is still protected
     n = ed.body.n
     click(app, sp(app, 1), button=3); assert ed.body.n == n
     key(app, pygame.K_o)
-    print("[2b] burun modunda kemik 1 silinebiliyor (geri alınır); eski modda korunuyor")
+    print("[2b] bone 1 can be deleted in nose mode (undoable); protected in the old mode")
     app.close()
     shutil.rmtree(out, ignore_errors=True)
 
@@ -280,8 +280,8 @@ def test_with_trainer():
         frames(app, 6)
         time.sleep(0.1)
     n = len(app.history)
-    print(f"[3] eğitim süreci: {n} nesil alındı, aşama {app.stage}, "
-          f"doğrulama {[round(h['validity'], 2) for h in app.history if h.get('validity') is not None]}")
+    print(f"[3] training process: {n} generations received, stage {app.stage}, "
+          f"validation {[round(h['validity'], 2) for h in app.history if h.get('validity') is not None]}")
     assert n >= 4 and app.stage >= 2, (n, app.stage)
     frames(app, 100)
     shot(app, "train_1280x720.png")
@@ -290,10 +290,10 @@ def test_with_trainer():
     key(app, pygame.K_p)
     key(app, pygame.K_TAB)
     frames(app, 30)
-    assert app.library[0]["name"].startswith("canlı")
+    assert app.library[0]["name"].startswith("creature")
     t = time.time(); app.close()
     assert not app.trainer.alive()
-    print(f"[3] aşama 2 + doğrulama mesajı, duraklat/sürdür, kapanış {time.time()-t:.1f} sn OK")
+    print(f"[3] stage 2 + validation message, pause/resume, shutdown {time.time()-t:.1f} s OK")
     shutil.rmtree(out, ignore_errors=True)
 
 
@@ -304,7 +304,7 @@ def test_send_to_training(load):
     key(app, pygame.K_TAB)
     assert app.mode == MODE_EDIT
     ed = app.editor
-    key(app, pygame.K_n)                                     # boş canlı: 2 uzuv
+    key(app, pygame.K_n)                                     # empty creature: 2 limbs
     click(app, sp(app, 2))
     click(app, w2s(app, ed.pos()[2] + np.array([0.5, 0.0])))
     click(app, sp(app, 3))
@@ -314,25 +314,25 @@ def test_send_to_training(load):
     view, panel, _ = app.layout()
     buttons, rows, _ = ed.layout_panel(panel)
     for r, label, fn in buttons:
-        if label.startswith("Eğitime"):
+        if label.startswith("Send to training"):
             click(app, (panel.x + r.centerx, panel.y + r.centery))
     assert ed.confirm
     frames(app, 2); shot(app, "editor_send_training.png")
-    key(app, pygame.K_ESCAPE); assert not ed.confirm and app.running      # ESC sadece pencereyi kapatır
+    key(app, pygame.K_ESCAPE); assert not ed.confirm and app.running      # ESC only closes the dialog
     ed.ask_training()
-    key(app, pygame.K_1)                                     # vücut SABİT
+    key(app, pygame.K_1)                                     # body FIXED
     assert app.mode == MODE_TRAIN and app.trainer is not None and app.trainer.alive()
-    assert os.path.basename(app.out).startswith("tasarim_")
-    assert os.path.exists(os.path.join(app.out, "tasarim.json"))
+    assert os.path.basename(app.out).startswith("design_")
+    assert os.path.exists(os.path.join(app.out, "design.json"))
     t0 = time.time()
     while time.time() - t0 < 60 and len(app.history) < 3:
         frames(app, 6); time.sleep(0.1)
-    assert len(app.history) >= 3, "yeni eğitimden mesaj gelmiyor"
+    assert len(app.history) >= 3, "no messages arriving from the new training"
     assert all(h["best_limbs"] == n for h in app.history), [h["best_limbs"] for h in app.history]
     assert abs(app.history[-1]["mean_limbs"] - n) < 1e-9
     frames(app, 30); shot(app, "train_from_design.png")
-    print(f"[4] tasarımdan eğitim: {len(app.history)} nesil geldi, tüm bireylerde uzuv sayısı {n} (vücut sabit), "
-          f"klasör {os.path.basename(app.out)}")
+    print(f"[4] training from a design: {len(app.history)} generations arrived, limb count {n} in all individuals (body fixed), "
+          f"folder {os.path.basename(app.out)}")
     app.close()
     shutil.rmtree(base, ignore_errors=True)
 
@@ -345,4 +345,4 @@ if __name__ == "__main__":
     test_nose_bone1_deletable(load)
     test_with_trainer()
     test_send_to_training(load)
-    print("TAMAM ->", SHOTS)
+    print("DONE ->", SHOTS)

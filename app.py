@@ -1,27 +1,27 @@
 """
-Evrimleşen Yüzücüler - pygame arayüzü.
+Evolving Swimmers - pygame UI.
 
-    python app.py                       # eğitimi arka planda başlatır, canlıyı izlersin
+    python app.py                       # starts training in the background, you watch the creature
     python app.py --load runs/x/best.json
-    python app.py --no-train            # sadece izleme/deneme/editör (eğitim yok)
+    python app.py --no-train            # only watching/playing/editor (no training)
 
-Modlar (TAB ile döner): EĞİTİM (izle) -> DENE (WASD ile kontrol) -> EDİTÖR (canlı tasarla)
+Modes (cycled with TAB): TRAIN (watch) -> PLAY (control with WASD) -> EDITOR (design a creature)
 
-Genel tuşlar:
-    TAB      mod değiştir            E   editörü aç (seçili canlının kopyasıyla)
-    SPACE    TURBO aç/kapat (grafik kapanır, eğitim tüm çekirdekleri kullanır)
-    P        eğitimi duraklat / sürdür
-    + / -    simülasyon hızı         Fare tekerleği: yakınlaştır   Z: otomatik zoom
-    F11      tam ekran               H: yardım aç/kapat       ESC: çıkış
-DENE modu:
-    W A S D  hedef yön.  DÜNYA kontrolü: W yukarı, S aşağı, A sol, D sağ (çaprazlar dahil)
-             TANK kontrolü: W ileri, S geri, A sola dön, D sağa dön (gövdeye göre)
-    M        kontrol şeması: DÜNYA <-> TANK
-    (tuş yok) canlı durur: G ile "motorları kes" <-> "beyne komut yok (0) ver" arasında seçilir
-    K / L    kütüphanede önceki / sonraki canlı   B canlı şampiyon   N yeni rastgele canlı
-    ENTER    canlıyı sıfırla      R kayıtlı canlıları yeniden tara
-EDİTÖR tuşları için editor.py'ye bakın (H ile de görünür).
-Pencere serbestçe yeniden boyutlandırılabilir; tüm yerleşim pencere boyutuna göre hesaplanır.
+General keys:
+    TAB      change mode             E   open the editor (with a copy of the selected creature)
+    SPACE    toggle TURBO (graphics off, training uses all cores)
+    P        pause / resume training
+    + / -    simulation speed        Mouse wheel: zoom   Z: auto zoom
+    F11      fullscreen              H: toggle help       ESC: quit
+PLAY mode:
+    W A S D  target direction.  WORLD control: W up, S down, A left, D right (including diagonals)
+             TANK control: W forward, S backward, A turn left, D turn right (relative to the body)
+    M        control scheme: WORLD <-> TANK
+    (no key) the creature stops: G toggles between "cut the motors" <-> "give the brain no command (0)"
+    K / L    previous / next creature in the library   B live champion   N new random creature
+    ENTER    reset the creature      R rescan saved creatures
+For the EDITOR keys see editor.py (also shown with H).
+The window can be freely resized; the whole layout is computed from the window size.
 """
 from __future__ import annotations
 
@@ -44,13 +44,13 @@ from evolution import EvalConfig
 from genome import Genome, build_bodies, load_json, random_genome
 from physics import (PhysicsParams, center_of_mass, com_velocity, init_state, motor_mask, step)
 from trainer import run_training
-from ui import *          # renkler, Fonts, text, arrow, deg, wrap_pi, draw_creature
+from ui import *          # colors, Fonts, text, arrow, deg, wrap_pi, draw_creature
 from sim import Session, Camera
 from editor import Editor
 from physics import PHYSICS_VERSION
 
 # --------------------------------------------------------------------------- #
-#  Eğitim sürecini yöneten sarmalayıcı
+#  Wrapper that manages the training process
 # --------------------------------------------------------------------------- #
 class TrainerHandle:
     def __init__(self, out, pop, trials, duration, stage_len, seed, resume, workers, seed_genome=None, freeze_body=False,
@@ -91,10 +91,10 @@ class TrainerHandle:
 
 
 # --------------------------------------------------------------------------- #
-#  Uygulama
+#  Application
 # --------------------------------------------------------------------------- #
 MODE_TRAIN, MODE_PLAY, MODE_EDIT = 0, 1, 2
-MODE_NAMES = ["EĞİTİM", "DENE", "EDİTÖR"]
+MODE_NAMES = ["TRAIN", "PLAY", "EDITOR"]
 
 
 class App:
@@ -114,11 +114,11 @@ class App:
         self.windowed_size = screen.get_size()
         self.running = True
 
-        # eğitim durumu
+        # training state
         self.trainer = None
         self.paused = False
-        self.history = []             # özet sözlükleri
-        self.live = None              # canlı şampiyon (Genome)
+        self.history = []             # summary dictionaries
+        self.live = None              # live champion (Genome)
         self.live_gen = -1
         self.pending = None
         self.stage = 0
@@ -133,30 +133,30 @@ class App:
             self.trainer = TrainerHandle(out, pop, trials, duration, stage_len, seed, resume, workers, curriculum=curriculum,
                                          stop_command=stop_command, legacy_spine=legacy_spine)
 
-        # kütüphane (DENE modu)
+        # library (PLAY mode)
         self.library = []             # {name, genome}
         self.extra = []
         if load:
             self.extra.append((os.path.basename(load), load_json(load)))
         self.rescan()
         self.lib_idx = 0
-        self.watch = None             # EĞİTİM modunda izlenen oturum
+        self.watch = None             # session watched in TRAIN mode
         self.play = None
-        self.target = 0.0             # DENE modu hedefi
+        self.target = 0.0             # PLAY mode target
         self.have_key = False
-        self.scheme = "dünya"         # dünya | tank
-        self.idle = "motor"           # tuş yokken: motor (motorları kes) | beyin (komut yok = 0)
+        self.scheme = "world"         # world | tank
+        self.idle = "motor"           # when no key: motor (cut the motors) | brain (no command = 0)
         self.editor = Editor(self)
         if load:
             self.mode = MODE_PLAY
         self.select_library(0)
         self.editor_inited = False
 
-    # ---------------- kütüphane ----------------
+    # ---------------- library ----------------
     def rescan(self):
         lib = []
         if self.live is not None:
-            lib.append(dict(name=f"canlı şampiyon (nesil {self.live_gen})", genome=self.live))
+            lib.append(dict(name=f"creature champion (generation {self.live_gen})", genome=self.live))
         for name, g in self.extra:
             lib.append(dict(name=self.tag(name, g), genome=g))
         files = []
@@ -172,14 +172,14 @@ class App:
                 except Exception:
                     pass
         if not lib:
-            lib.append(dict(name="rastgele #1 (eğitilmemiş)", genome=self._rand_genome(3, 8)))
+            lib.append(dict(name="random #1 (untrained)", genome=self._rand_genome(3, 8)))
         self.library = lib
 
     @staticmethod
     def tag(name, g):
-        """Eski fizik sürümüyle eğitilmiş dosyaları işaretle (davranışları yeni fizikte farklı olabilir)."""
+        """Mark files trained with an old physics version (their behavior may differ in the new physics)."""
         if g.meta.get("physics", 1) != PHYSICS_VERSION and not g.meta.get("designed"):
-            return name + " [eski fizik]"
+            return name + " [old physics]"
         return name
 
     def open_in_play(self, genome, name):
@@ -200,7 +200,7 @@ class App:
         g.meta = {"physics": PHYSICS_VERSION}
         return g
 
-    # ---------------- olaylar ----------------
+    # ---------------- events ----------------
     def handle_event(self, e):
         if e.type == pygame.QUIT:
             self.running = False
@@ -262,29 +262,29 @@ class App:
                 elif k == pygame.K_k:
                     self.select_library(self.lib_idx - 1)
                 elif k == pygame.K_m:
-                    self.scheme = "tank" if self.scheme == "dünya" else "dünya"
+                    self.scheme = "tank" if self.scheme == "world" else "world"
                 elif k == pygame.K_g:
-                    self.idle = "beyin" if self.idle == "motor" else "motor"
+                    self.idle = "brain" if self.idle == "motor" else "motor"
                 elif k == pygame.K_b:
                     self.rescan()
                     self.select_library(0)
                 elif k == pygame.K_n:
                     g = self._rand_genome(3, 10)
-                    self.library.append(dict(name=f"rastgele #{len(self.library)} (eğitilmemiş)", genome=g))
+                    self.library.append(dict(name=f"random #{len(self.library)} (untrained)", genome=g))
                     self.select_library(len(self.library) - 1)
 
     def start_training_from(self, genome, freeze_body, name=""):
-        """Editörden: mevcut eğitimi kaydedip durdur, tasarımdan yeni bir eğitim koşusu başlat."""
+        """From the editor: save and stop the current training, start a new training run from the design."""
         if self.trainer:
             self.trainer.shutdown()
         base = os.path.dirname(os.path.normpath(self.out)) or "."
         k = 1
-        while os.path.exists(os.path.join(base, f"tasarim_{k:03d}")):
+        while os.path.exists(os.path.join(base, f"design_{k:03d}")):
             k += 1
-        self.out = os.path.join(base, f"tasarim_{k:03d}")
+        self.out = os.path.join(base, f"design_{k:03d}")
         os.makedirs(self.out, exist_ok=True)
         from genome import save_json
-        save_json(genome, os.path.join(self.out, "tasarim.json"))
+        save_json(genome, os.path.join(self.out, "design.json"))
         self.history, self.live, self.live_gen, self.pending, self.watch = [], None, -1, None, None
         self.stage, self.dir_range, self.trainer_error, self.paused = 0, None, None, False
         self.gen_times.clear()
@@ -292,7 +292,7 @@ class App:
         self.trainer = TrainerHandle(self.out, a_["pop"], a_["trials"], a_["duration"], a_["stage_len"], a_["seed"],
                                      False, a_["workers"], seed_genome=genome, freeze_body=freeze_body,
                                      curriculum=a_["curriculum"], stop_command=a_["stop_command"], legacy_spine=a_["legacy_spine"])
-        self.seed_note = f"tasarımdan eğitim ({genome.body.n} uzuv, vücut {'SABİT' if freeze_body else 'evrimleşiyor'}) → {self.out}"
+        self.seed_note = f"training from a design ({genome.body.n} limbs, body {'FIXED' if freeze_body else 'evolving'}) → {self.out}"
         self.info_msg = ""
         self.rescan()
         self.mode = MODE_TRAIN
@@ -319,11 +319,11 @@ class App:
         else:
             self.screen = pygame.display.set_mode(self.windowed_size, pygame.RESIZABLE)
 
-    # ---------------- eğitimden mesajlar ----------------
+    # ---------------- messages from training ----------------
     def swap_watch(self):
         if self.pending is not None:
             g, gen = self.pending
-            self.watch = Session(g, f"şampiyon · nesil {gen}", heading=float(self.rng.uniform(-math.pi, math.pi)))
+            self.watch = Session(g, f"champion · generation {gen}", heading=float(self.rng.uniform(-math.pi, math.pi)))
             self.pending = None
 
     def poll_trainer(self):
@@ -339,10 +339,10 @@ class App:
                 self.live, self.live_gen = champ, s["gen"]
                 self.pending = (champ, s["gen"])
                 self.gen_times.append((time.time(), s["gen"]))
-                if self.library and self.library[0]["name"].startswith("canlı"):
-                    self.library[0] = dict(name=f"canlı şampiyon (nesil {s['gen']})", genome=champ)
+                if self.library and self.library[0]["name"].startswith("creature"):
+                    self.library[0] = dict(name=f"creature champion (generation {s['gen']})", genome=champ)
                 elif self.live is not None:
-                    self.library.insert(0, dict(name=f"canlı şampiyon (nesil {s['gen']})", genome=champ))
+                    self.library.insert(0, dict(name=f"creature champion (generation {s['gen']})", genome=champ))
                     self.lib_idx += 1
             elif kind == "info":
                 self.info_msg = msg[1]
@@ -355,7 +355,7 @@ class App:
         (t0, g0), (t1, g1) = self.gen_times[0], self.gen_times[-1]
         return 60.0 * (g1 - g0) / max(t1 - t0, 1e-6)
 
-    # ---------------- girdi ----------------
+    # ---------------- input ----------------
     def move_vector(self):
         k = self.keys()
         dx = int(bool(k[pygame.K_d])) - int(bool(k[pygame.K_a]))
@@ -363,7 +363,7 @@ class App:
         return dx, dy
 
     def auto_target(self, sess: Session):
-        """EĞİTİM modunda izlenen şampiyona gösterilen komut dizisi: (açı, büyüklük)."""
+        """Command sequence shown to the champion watched in TRAIN mode: (angle, magnitude)."""
         if self.stage >= 3:
             seq = [(i * math.pi / 4, 1.0) for i in range(8)]
             seq.insert(3, (0.0, 0.0))
@@ -380,11 +380,11 @@ class App:
         a, m = seq[int(sess.t / 5.0) % len(seq)]
         return sess.h0 + a, m
 
-    # ---------------- güncelleme ----------------
+    # ---------------- update ----------------
     def update(self, dt):
         self.poll_trainer()
         if self.trainer and not self.trainer.alive() and not self.trainer_error and self.running:
-            self.trainer_error = "eğitim süreci beklenmedik şekilde kapandı"
+            self.trainer_error = "the training process closed unexpectedly"
         if self.turbo:
             return
         dt = min(dt, 0.1) * self.time_scale
@@ -410,9 +410,9 @@ class App:
         self.have_key = (dx != 0 or dy != 0)
         mag, motors = 1.0, True
         if self.have_key:
-            if self.scheme == "dünya":
+            if self.scheme == "world":
                 self.target = math.atan2(dy, dx)
-            else:        # tank: hedef GÖVDE çerçevesinde (W ileri, S geri, A sola, D sağa)
+            else:        # tank: target is in the BODY frame (W forward, S backward, A left, D right)
                 self.target = self.play.tele["heading"] + math.atan2(-dx, dy)
         elif self.idle == "motor":
             motors = False
@@ -421,7 +421,7 @@ class App:
         self.play.advance(dt, self.target, mag, motors)
         self.cam.update(self.play, view_wh, dt)
 
-    # ---------------- yerleşim ----------------
+    # ---------------- layout ----------------
     def layout(self):
         w, h = self.screen.get_size()
         bar_h = int(self.fonts.small.get_height() * 1.9)
@@ -435,7 +435,7 @@ class App:
         v, _, _ = self.layout()
         return v.size
 
-    # ---------------- çizim ----------------
+    # ---------------- drawing ----------------
     def draw(self):
         w, h = self.screen.get_size()
         if self.fonts.h != h:
@@ -463,10 +463,10 @@ class App:
             self.draw_error(vsurf)
         pygame.display.flip()
 
-    # --- dünya ---
+    # --- world ---
     def draw_world(self, surf, sess, cam=None):
         vw, vh = surf.get_size()
-        # su gradyanı
+        # water gradient
         grad = getattr(self, "_grad", None)
         if grad is None or grad.get_size() != (vw, vh):
             grad = pygame.Surface((1, vh))
@@ -476,11 +476,11 @@ class App:
             self._grad = grad = pygame.transform.scale(grad, (vw, vh))
         surf.blit(grad, (0, 0))
         if sess is None:
-            text(surf, self.fonts.big, "Eğitimden ilk şampiyon bekleniyor…", (vw // 2, vh // 2), C_DIM, "center")
+            text(surf, self.fonts.big, "Waiting for the first champion from training…", (vw // 2, vh // 2), C_DIM, "center")
             return
         cam = cam or self.cam
         sc = cam.scale
-        # ızgara (1 m ve 5 m)
+        # grid (1 m and 5 m)
         x0, x1 = cam.c[0] - vw / 2 / sc, cam.c[0] + vw / 2 / sc
         y0, y1 = cam.c[1] - vh / 2 / sc, cam.c[1] + vh / 2 / sc
         for step_m, col in ((1, C_GRID_MINOR), (5, C_GRID_MAJOR)):
@@ -499,12 +499,12 @@ class App:
                     continue
                 pygame.draw.line(surf, col, (0, py), (vw, py))
         wh = (vw, vh)
-        # iz
+        # trail
         if len(sess.trail) > 2:
             pts = [cam.w2s(p, wh) for p in sess.trail]
             pygame.draw.lines(surf, (60, 120, 160), False, pts, 2)
         draw_creature(surf, sess, cam, wh)
-        # vektörler (COM üzerinde)
+        # vectors (on the COM)
         tl = sess.tele
         p = cam.w2s(tl["com"], wh)
         R = max(40, min(vw, vh) * 0.12)
@@ -517,7 +517,7 @@ class App:
             n = v / max(np.linalg.norm(v), 1e-9)
             arrow(surf, C_VEL, p, (p[0] + n[0] * vl, p[1] - n[1] * vl), 3)
 
-    # --- HUD'lar ---
+    # --- HUDs ---
     def draw_graph(self, surf, rect, big=False):
         f = self.fonts
         bg = pygame.Surface(rect.size, pygame.SRCALPHA)
@@ -525,9 +525,9 @@ class App:
         surf.blit(bg, rect.topleft)
         pygame.draw.rect(surf, C_PANEL_LINE, rect, 1)
         H = self.history
-        text(surf, f.small, "En iyi fitness / ortalama", (rect.x + 8, rect.y + 4), C_DIM)
+        text(surf, f.small, "Best fitness / mean", (rect.x + 8, rect.y + 4), C_DIM)
         if len(H) < 2:
-            text(surf, f.small, "veri bekleniyor…", rect.center, C_DIM, "center")
+            text(surf, f.small, "waiting for data…", rect.center, C_DIM, "center")
             return
         inner = pygame.Rect(rect.x + 44, rect.y + f.small.get_height() + 10, rect.w - 56, rect.h - f.small.get_height() - 24)
         best = np.array([s["best"] for s in H])
@@ -540,11 +540,11 @@ class App:
         gx = lambda g: inner.x + (g - gens[0]) / max(gens[-1] - gens[0], 1) * inner.w
         gy = lambda v: inner.bottom - (v - lo) / (hi - lo) * inner.h
         pygame.draw.line(surf, C_PANEL_LINE, (inner.x, gy(0)), (inner.right, gy(0)))
-        # aşama geçişleri
+        # stage transitions
         for k in range(1, len(H)):
             if stages[k] != stages[k - 1]:
                 pygame.draw.line(surf, (120, 90, 160), (gx(gens[k]), inner.y), (gx(gens[k]), inner.bottom))
-                text(surf, f.small, f"aşama {stages[k]}", (gx(gens[k]) + 3, inner.y), (170, 140, 210))
+                text(surf, f.small, f"stage {stages[k]}", (gx(gens[k]) + 3, inner.y), (170, 140, 210))
         step = max(1, len(H) // max(inner.w, 1))
         idx = list(range(0, len(H), step))
         if idx[-1] != len(H) - 1:
@@ -555,7 +555,7 @@ class App:
                 pygame.draw.lines(surf, col, False, pts, 2)
         text(surf, f.small, f"{hi:.2f}", (rect.x + 4, inner.y), C_DIM)
         text(surf, f.small, f"{lo:.2f}", (rect.x + 4, inner.bottom - f.small.get_height()), C_DIM)
-        text(surf, f.small, f"nesil {gens[0]}…{gens[-1]}", (inner.right, rect.bottom - f.small.get_height() - 2), C_DIM, "topright")
+        text(surf, f.small, f"generation {gens[0]}…{gens[-1]}", (inner.right, rect.bottom - f.small.get_height() - 2), C_DIM, "topright")
 
     def draw_train_hud(self, surf):
         f = self.fonts
@@ -564,60 +564,60 @@ class App:
         lines = []
         if H:
             s = H[-1]
-            diff = f"zorluk {s.get('notch', s['stage'])}/{s.get('notch_max', 10)}" + (f" · yön aralığı ±{s['dir_range_deg']:.0f}°" if s.get("dir_range_deg") else "")
-            lines = [f"Nesil {s['gen']}   ·   {diff}",
-                     f"en iyi {s['best']:+.3f}   ort {s['mean']:+.3f}",
-                     f"en iyi uzuv sayısı {s['best_limbs']}   ort {s['mean_limbs']:.1f}",
-                     f"{self.gens_per_min():.1f} nesil/dk" + ("   · DURAKLATILDI" if self.paused else "")]
+            diff = f"difficulty {s.get('notch', s['stage'])}/{s.get('notch_max', 10)}" + (f" · direction range ±{s['dir_range_deg']:.0f}°" if s.get("dir_range_deg") else "")
+            lines = [f"Generation {s['gen']}   ·   {diff}",
+                     f"best {s['best']:+.3f}   mean {s['mean']:+.3f}",
+                     f"best limb count {s['best_limbs']}   mean {s['mean_limbs']:.1f}",
+                     f"{self.gens_per_min():.1f} generations/min" + ("   · PAUSED" if self.paused else "")]
             if s.get("mut_scale", 1.0) > 1:
-                lines.append(f"takılma: {s['stall']} nesil iyileşme yok → mutasyon ×{s['mut_scale']:.1f}")
+                lines.append(f"stall: {s['stall']} generations without improvement → mutation ×{s['mut_scale']:.1f}")
             val = [h_ for h_ in H if h_.get("validity") is not None]
             if val:
                 v = val[-1]["validity"]
-                lines.append(f"fizik doğrulama (nesil {val[-1]['gen']}): {v:.2f}" + ("" if v >= 0.7 else "   ŞÜPHELİ: hız sayısal hatadan geliyor olabilir"))
+                lines.append(f"physics validation (generation {val[-1]['gen']}): {v:.2f}" + ("" if v >= 0.7 else "   SUSPICIOUS: the speed may come from numerical error"))
             if self.seed_note:
                 lines.append(self.seed_note[:110])
             if self.info_msg:
                 lines.append(self.info_msg[:110])
         else:
-            lines = (["Eğitim başlıyor… (ilk nesil birkaç saniye sürer)"] + ([self.seed_note[:110]] if self.seed_note else [])) if self.trainer else ["Eğitim kapalı (--no-train)"]
+            lines = (["Training is starting… (the first generation takes a few seconds)"] + ([self.seed_note[:110]] if self.seed_note else [])) if self.trainer else ["Training is off (--no-train)"]
         y = 8
         for ln in lines:
             text(surf, f.normal, ln, (10, y), C_TEXT)
             y += f.normal.get_height() + 2
         if self.pending is not None and self.watch is not None:
-            text(surf, f.small, f"yeni şampiyon hazır (nesil {self.pending[1]}) — ENTER ile geç, otomatik geçiş yakında",
+            text(surf, f.small, f"new champion ready (generation {self.pending[1]}) — switch with ENTER, automatic switch soon",
                  (10, y + 4), C_DIM)
         gw, gh = int(vw * 0.46), int(vh * 0.28)
         self.draw_graph(surf, pygame.Rect(10, vh - gh - 10, gw, gh))
-        text(surf, f.small, f"hız ×{self.time_scale:g}   zoom {self.cam.scale:.0f} px/m" + ("" if self.cam.auto else " (elle)"),
+        text(surf, f.small, f"speed ×{self.time_scale:g}   zoom {self.cam.scale:.0f} px/m" + ("" if self.cam.auto else " (manual)"),
              (vw - 10, 8), C_DIM, "topright")
 
     def draw_play_hud(self, surf):
         f = self.fonts
         vw, vh = surf.get_size()
         sess = self.play
-        text(surf, f.normal, f"{sess.label}   ·   {sess.genome.body.n} uzuv", (10, 8), C_TEXT)
+        text(surf, f.normal, f"{sess.label}   ·   {sess.genome.body.n} limbs", (10, 8), C_TEXT)
         y = 8 + f.normal.get_height() + 4
-        if self.scheme == "dünya":
-            keys = "W↑ S↓ A← D→ (dünya yönleri)"
+        if self.scheme == "world":
+            keys = "W↑ S↓ A← D→ (world directions)"
         else:
-            keys = "W ileri · S geri · A sola dön · D sağa dön (gövdeye göre)"
-        text(surf, f.small, f"kontrol: {self.scheme.upper()} (M)   ·   {keys}", (10, y), C_DIM)
+            keys = "W forward · S backward · A turn left · D turn right (relative to the body)"
+        text(surf, f.small, f"control: {self.scheme.upper()} (M)   ·   {keys}", (10, y), C_DIM)
         y += f.small.get_height() + 2
         if self.have_key:
-            st_ = "komut: aktif"
+            st_ = "command: active"
         elif self.idle == "motor":
-            st_ = "BOŞTA: motorlar kapalı, canlı süzülerek durur   (G: beyne 'komut yok' ver)"
+            st_ = "IDLE: motors off, the creature coasts to a stop   (G: give the brain 'no command')"
         else:
-            st_ = "BOŞTA: beyne 'komut yok' (0) veriliyor — canlı eğitimde durmayı öğrendiyse durur   (G: motorları kes)"
+            st_ = "IDLE: the brain is given 'no command' (0) — it stops if the creature learned to stop in training   (G: cut the motors)"
         text(surf, f.small, st_, (10, y), C_VEL if not self.have_key else C_TARGET)
         y += f.small.get_height() + 2
-        if "[eski fizik]" in sess.label:
-            text(surf, f.small, "bu canlı eski fizik sürümüyle eğitildi: davranışı farklı olabilir (python validate.py ile kontrol et)", (10, y), (255, 150, 120))
-        text(surf, f.small, f"hız ×{self.time_scale:g}   zoom {self.cam.scale:.0f} px/m" + ("" if self.cam.auto else " (elle)"),
+        if "[old physics]" in sess.label:
+            text(surf, f.small, "this creature was trained with an old physics version: its behavior may differ (check with python validate.py)", (10, y), (255, 150, 120))
+        text(surf, f.small, f"speed ×{self.time_scale:g}   zoom {self.cam.scale:.0f} px/m" + ("" if self.cam.auto else " (manual)"),
              (vw - 10, 8), C_DIM, "topright")
-        # WASD göstergesi
+        # WASD indicator
         ks = self.keys()
         size = max(22, int(vh * 0.05))
         base = (vw - 3 * size - 24, vh - 2 * size - 24)
@@ -635,13 +635,13 @@ class App:
         pygame.draw.rect(surf, (220, 80, 80), r, 2, border_radius=8)
         msg = (self.trainer_error or "")[-900:].splitlines()[-12:]
         y = r.y + 10
-        text(surf, self.fonts.normal, "Eğitim hatası:", (r.x + 12, y), (255, 160, 160))
+        text(surf, self.fonts.normal, "Training error:", (r.x + 12, y), (255, 160, 160))
         y += self.fonts.normal.get_height() + 4
         for ln in msg:
             text(surf, self.fonts.small, ln[:140], (r.x + 12, y), C_TEXT)
             y += self.fonts.small.get_height() + 1
 
-    # --- sağ panel (telemetri) ---
+    # --- right panel (telemetry) ---
     def draw_panel(self, surf, sess):
         f = self.fonts
         pw, ph = surf.get_size()
@@ -655,7 +655,7 @@ class App:
         y += f.small.get_height() + 8
 
         tl = sess.tele
-        # pusula
+        # compass
         R = int(min(pw * 0.2, ph * 0.13))
         cc = (12 + R + 4, y + R + 4)
         pygame.draw.circle(surf, (20, 30, 44), cc, R)
@@ -673,12 +673,12 @@ class App:
 
         tx = cc[0] + R + 16
         err = math.degrees(wrap_pi(tl["target"] - tl["heading"]))
-        rows = [("Hedef yön", f"{deg(tl['target']):5.0f}°" if active else "  —  (yok)", C_TARGET),
-                ("Gövde yönü", f"{deg(tl['heading']):5.0f}°", C_HEAD),
-                ("Yön hatası", f"{err:+5.0f}°" if active else "  —", C_TEXT),
-                ("Hız", f"{tl['speed']:5.2f} m/s", C_VEL),
-                ("Hedefe ilerleme", f"{tl['progress']:+5.2f} m/s", C_TEXT),
-                ("Yanal sapma", f"{tl['lateral']:+5.2f} m/s", C_TEXT)]
+        rows = [("Target direction", f"{deg(tl['target']):5.0f}°" if active else "  —  (none)", C_TARGET),
+                ("Body direction", f"{deg(tl['heading']):5.0f}°", C_HEAD),
+                ("Direction error", f"{err:+5.0f}°" if active else "  —", C_TEXT),
+                ("Speed", f"{tl['speed']:5.2f} m/s", C_VEL),
+                ("Progress to target", f"{tl['progress']:+5.2f} m/s", C_TEXT),
+                ("Lateral deviation", f"{tl['lateral']:+5.2f} m/s", C_TEXT)]
         ry = y
         rh = f.small.get_height() + 3
         for k, v, col in rows:
@@ -687,18 +687,18 @@ class App:
             ry += rh
         y = max(cc[1] + R + 10, ry + 6)
 
-        # enerji
-        text(surf, f.small, "Enerji", (12, y), C_DIM)
+        # energy
+        text(surf, f.small, "Energy", (12, y), C_DIM)
         bw = pw - 24
         y += f.small.get_height() + 2
         pygame.draw.rect(surf, (24, 34, 48), (12, y, bw, 8), border_radius=3)
         pygame.draw.rect(surf, C_POS, (12, y, int(bw * min(1.0, tl["energy"])), 8), border_radius=3)
         y += 11
-        text(surf, f.small, f"ort. komut² {tl['energy']:.2f}   güç {tl['power']:.1f}   toplam {tl['total']:.0f}   t={tl['t']:.1f}s",
+        text(surf, f.small, f"mean command² {tl['energy']:.2f}   power {tl['power']:.1f}   total {tl['total']:.0f}   t={tl['t']:.1f}s",
              (12, y), C_TEXT)
         y += f.small.get_height() + 8
 
-        # ilerleme grafiği (son ~12 sn)
+        # progress graph (last ~12 s)
         gh = int(ph * 0.09)
         gr = pygame.Rect(12, y, pw - 24, gh)
         pygame.draw.rect(surf, (20, 28, 40), gr)
@@ -710,11 +710,11 @@ class App:
             pygame.draw.line(surf, C_PANEL_LINE, (gr.x, zero), (gr.right, zero))
             pts = [(gr.x + i / (sess.progress_hist.maxlen - 1) * gr.w, zero - v / vmax * (gr.h / 2 - 2)) for i, v in enumerate(H)]
             pygame.draw.lines(surf, C_VEL, False, pts, 2)
-        text(surf, f.small, "hedefe ilerleme (son 12 sn)", (gr.x + 4, gr.y + 1), C_DIM)
+        text(surf, f.small, "progress to target (last 12 s)", (gr.x + 4, gr.y + 1), C_DIM)
         y = gr.bottom + 8
 
-        # eklemler
-        text(surf, f.small, "Eklemler: açı (sınırlara göre) · komut", (12, y), C_DIM)
+        # joints
+        text(surf, f.small, "Joints: angle (relative to limits) · command", (12, y), C_DIM)
         y += f.small.get_height() + 3
         self.draw_joints(surf, sess, pygame.Rect(12, y, pw - 24, ph - y - 6))
 
@@ -751,23 +751,23 @@ class App:
             pygame.draw.line(surf, C_PANEL_LINE, (mid, cb.y), (mid, cb.bottom))
             y += rh
 
-    # --- alt çubuk ---
+    # --- bottom bar ---
     def draw_bar(self, surf):
         f = self.fonts
         surf.fill((10, 14, 20))
         w, h = surf.get_size()
         if self.show_help and self.mode == MODE_EDIT:
-            s = ("TAB mod · Y simetri · M ayna · T test · N yeni · K/L yükle · ↑/↓ değer · 1-8 özellik · DEL sil · "
-                 "Ctrl+Z/Y geri/yinele · Ctrl+S kaydet · ENTER DENE'de aç · H yardım")
+            s = ("TAB mode · Y symmetry · M mirror · T test · N new · K/L load · ↑/↓ value · 1-8 property · DEL delete · "
+                 "Ctrl+Z/Y undo/redo · Ctrl+S save · ENTER open in PLAY · H help")
         elif self.show_help:
-            s = ("TAB mod · E editör · SPACE turbo · P duraklat · WASD yön · M dünya/tank · G boşta · K/L canlı · B şampiyon · "
-                 "N rastgele · ENTER sıfırla · +/- hız · F11 · H yardım")
+            s = ("TAB mode · E editor · SPACE turbo · P pause · WASD direction · M world/tank · G idle · K/L creature · B champion · "
+                 "N random · ENTER reset · +/- speed · F11 · H help")
         else:
-            s = "H: yardım"
+            s = "H: help"
         text(surf, f.small, s, (8, h // 2), C_DIM, "midleft")
         status = []
         if self.trainer:
-            status.append("eğitim: " + ("duraklatıldı" if self.paused else "çalışıyor" if self.trainer.alive() else "durdu"))
+            status.append("training: " + ("paused" if self.paused else "running" if self.trainer.alive() else "stopped"))
         text(surf, f.small, "  ".join(status), (w - 8, h // 2), C_BEST, "midright")
 
     # --- turbo ---
@@ -776,21 +776,21 @@ class App:
         w, h = self.screen.get_size()
         scr = self.screen
         text(scr, f.huge, "TURBO", (w // 2, int(h * 0.06)), C_POS, "midtop")
-        text(scr, f.normal, "Grafik/simülasyon kapalı — eğitim tüm çekirdekleri kullanıyor.  SPACE: geri dön",
+        text(scr, f.normal, "Graphics/simulation off — training is using all cores.  SPACE: go back",
              (w // 2, int(h * 0.06) + f.huge.get_height() + 4), C_DIM, "midtop")
         H = self.history
         if H:
             s = H[-1]
-            line = (f"Nesil {s['gen']}   ·   aşama {s['stage']}   ·   en iyi {s['best']:+.3f}   ·   ort {s['mean']:+.3f}"
-                    f"   ·   {self.gens_per_min():.1f} nesil/dk")
+            line = (f"Generation {s['gen']}   ·   stage {s['stage']}   ·   best {s['best']:+.3f}   ·   mean {s['mean']:+.3f}"
+                    f"   ·   {self.gens_per_min():.1f} generations/min")
         else:
-            line = "ilk nesil bekleniyor…"
+            line = "waiting for the first generation…"
         text(scr, f.big, line, (w // 2, int(h * 0.26)), C_TEXT, "midtop")
         self.draw_graph(scr, pygame.Rect(int(w * 0.07), int(h * 0.36), int(w * 0.86), int(h * 0.52)))
         if self.trainer_error:
             self.draw_error(scr)
 
-    # ---------------- kapanış ----------------
+    # ---------------- shutdown ----------------
     def close(self):
         if self.trainer:
             self.trainer.shutdown()
@@ -799,27 +799,27 @@ class App:
 # --------------------------------------------------------------------------- #
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="runs/app1", help="kayıt klasörü (best.json, gen_*.json, log.csv, checkpoint)")
-    ap.add_argument("--no-train", action="store_true", help="eğitimi başlatma")
+    ap.add_argument("--out", default="runs/app1", help="save folder (best.json, gen_*.json, log.csv, checkpoint)")
+    ap.add_argument("--no-train", action="store_true", help="do not start training")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--pop", type=int, default=64)
     ap.add_argument("--trials", type=int, default=4)
     ap.add_argument("--duration", type=float, default=8.0)
     ap.add_argument("--stage-len", type=int, default=25)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--workers", type=int, default=0, help="0 = çekirdek sayısı - 1")
-    ap.add_argument("--load", default=None, help="bir canlı JSON'u aç (DENE modunda başlar)")
+    ap.add_argument("--workers", type=int, default=0, help="0 = number of cores - 1")
+    ap.add_argument("--load", default=None, help="open a creature JSON (starts in PLAY mode)")
     ap.add_argument("--size", default="1280x720")
     ap.add_argument("--curriculum", choices=["adaptive", "fixed"], default="adaptive")
-    ap.add_argument("--stop-command", action="store_true", help="'komut yok = dur' kademesini aç (varsayılan KAPALI)")
-    ap.add_argument("--legacy-spine", action="store_true", help="ESKİ omurga modu: kemik 1 pasif, gövde yönünü o belirler (varsayılan: gövde yönü = kafanın yönü)")
+    ap.add_argument("--stop-command", action="store_true", help="enable the 'no command = stop' notch (default OFF)")
+    ap.add_argument("--legacy-spine", action="store_true", help="OLD spine mode: bone 1 is passive and determines the body direction (default: body direction = head direction)")
     a = ap.parse_args()
 
     pygame.display.init()
     pygame.font.init()
     w, h = (int(v) for v in a.size.lower().split("x"))
     screen = pygame.display.set_mode((w, h), pygame.RESIZABLE)
-    pygame.display.set_caption("Evrimleşen Yüzücüler")
+    pygame.display.set_caption("Evolving Swimmers")
     app = App(screen, out=a.out, train=not a.no_train, pop=a.pop, trials=a.trials, duration=a.duration,
               stage_len=a.stage_len, seed=a.seed, resume=a.resume, load=a.load, workers=a.workers,
               curriculum=a.curriculum, stop_command=a.stop_command, legacy_spine=a.legacy_spine)
@@ -832,7 +832,7 @@ def main():
             app.update(dt)
             app.draw()
     finally:
-        pygame.display.set_caption("Kapatılıyor… (eğitim kaydediliyor)")
+        pygame.display.set_caption("Shutting down… (saving training)")
         app.close()
         pygame.quit()
 

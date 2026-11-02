@@ -1,17 +1,17 @@
 """
-Chapter 2 / Aşama 1 - Ortak su dünyası.
+Chapter 2 / Stage 1 - Shared water world.
 
-* Dünya SARMAL (torus): kenarlar yok, bir kenardan çıkan öbür kenardan girer. Mesafeler en kısa yoldan ölçülür.
-* Tüm canlılar TEK fizik batch'inde ilerler (physics.step bağımsız canlılar içindir; canlılar arası fiziksel etkileşim yok).
-  Etkileşimler (yeme, algı, ölüm) fizik adımının dışında, her kontrol adımında (50 Hz) başlar.
-* Yem: birkaç yem KAYNAĞI sabit hızla yem üretir, kaynaklar yavaşça kayar. Yem bir süre sonra çürür.
-* Enerji: hareket = gerçek MEKANİK GÜÇ (|eklem torku x eklem hızı|) x küçük katsayı; ayrıca kütleyle artan çok küçük bazal
-  gider. Yem enerji verir. Enerji <= 0 -> ölüm.
-* Algı (beyin v2): "hedef yön" girişi = en yakın yemin yönü (menzil dışı = 0); ayrıca yem yakınlığı, kendi enerjisi ve en
-  yakın canlının yönü/yakınlığı/enerjisi.
-* Üreme (aşama 2): beynin iki isteği var. EŞEYSİZ: tek başına, ebeveyn cost_split öder (pahalı). EŞEYLİ: iki canlı da isterse ve
-  kafaları r_mate içindeyse her biri cost_mate öder, yavru iki ebeveynin çaprazı. Yavru e_birth enerjiyle doğar, vücut ve
-  beyin mutasyona uğrar. Kural yok: yalnızca enerji ve (kısa) olgunlaşma süresi sınırlar. Batch gerekirse genişler.
+* The world WRAPS AROUND (torus): there are no edges, leaving one edge means entering from the opposite one. Distances are measured along the shortest path.
+* All creatures advance in a SINGLE physics batch (physics.step is for independent creatures; there is no physical interaction between creatures).
+  Interactions (eating, sensing, death) take place outside the physics step, at every control step (50 Hz).
+* Food: a few food SOURCES produce food at a constant rate, the sources drift slowly. Food rots after a while.
+* Energy: movement = real MECHANICAL POWER (|joint torque x joint velocity|) x a small coefficient; plus a very small basal
+  cost that grows with mass. Food gives energy. Energy <= 0 -> death.
+* Sensing (brain v2): the "target direction" input = direction of the nearest food (out of range = 0); also food proximity, own energy and the
+  direction/proximity/energy of the nearest creature.
+* Reproduction (stage 2): the brain has two requests. ASEXUAL: alone, the parent pays cost_split (expensive). SEXUAL: if both creatures want it and
+  their heads are within r_mate, each pays cost_mate, the offspring is a crossover of the two parents. The offspring is born with e_birth energy, body and
+  brain are mutated. No rules: only energy and a (short) maturation time limit it. The batch grows if necessary.
 """
 from __future__ import annotations
 
@@ -30,48 +30,48 @@ from physics import (MAX_LIMBS, PHYSICS_VERSION, Bodies, PhysicsParams, State, c
 
 @dataclass
 class WorldConfig:
-    size: float = 40.0            # torus kenarı (m)
-    n_init: int = 100             # başlangıç nüfusu
-    init_limbs: tuple = (4, 10)   # rastgele başlangıç canlılarının uzuv sayısı aralığı (batch genişliği = üst sınır + 2)
+    size: float = 40.0            # torus side (m)
+    n_init: int = 100             # initial population
+    init_limbs: tuple = (4, 10)   # limb count range of the random initial creatures (batch width = upper bound + 2)
     n_sources: int = 3
-    source_rate: float = 0.5      # kaynak başına yem/sn
-    source_sigma: float = 2.5     # yemin kaynak çevresindeki saçılımı (m)
-    source_drift: float = 0.08    # kaynak hızı (m/sn)
+    source_rate: float = 0.5      # food/s per source
+    source_sigma: float = 2.5     # spread of the food around the source (m)
+    source_drift: float = 0.08    # source speed (m/s)
     food_energy: float = 20.0
-    food_life: float = 120.0      # sn; sonra yem çürür
-    food_max: int = 300           # dünyadaki en çok yem (üretim doluluktan sonra durur)
-    eat_radius: float = 0.8       # kafa-yem mesafesi (m)
-    sense_radius: float = 12.0    # algı menzili (m)
+    food_life: float = 120.0      # s; after that the food rots
+    food_max: int = 300           # maximum food in the world (production stops once full)
+    eat_radius: float = 0.8       # head-food distance (m)
+    sense_radius: float = 12.0    # sensing range (m)
     e_init: float = 150.0
     e_max: float = 300.0
-    c_move: float = 0.003         # enerji / joule (mekanik iş): yılan (27 W) ~0.08/sn, balık (266 W) ~0.8/sn (0.01'de yılan tekeli oluşuyordu)
-    c_basal: float = 0.01         # enerji / (sn·kg) (0.05'te rastgele başlangıç nüfusu yem bulamadan eriyordu)
-    # üreme
-    e_birth: float = 80.0         # yavrunun doğum enerjisi (E0)
-    cost_split: float = 160.0     # eşeysiz üreme: ebeveynin ödediği (2·E0) - fark kaybolur
-    cost_mate: float = 60.0       # eşeyli üreme: HER ebeveynin ödediği (0.75·E0)
-    r_mate: float = 2.0           # eşleşme için kafa-kafa mesafesi (m)
-    min_age: float = 5.0          # olgunlaşma süresi (sn): yeni doğan hemen üremesin
-    want_thr: float = 0.5         # beyin isteği bu eşiği aşarsa canlı üremek ister
+    c_move: float = 0.003         # energy / joule (mechanical work): snake (27 W) ~0.08/s, fish (266 W) ~0.8/s (at 0.01 a snake monopoly formed)
+    c_basal: float = 0.01         # energy / (s·kg) (at 0.05 the random initial population melted away without finding food)
+    # reproduction
+    e_birth: float = 80.0         # birth energy of the offspring (E0)
+    cost_split: float = 160.0     # asexual reproduction: paid by the parent (2·E0) - the difference is lost
+    cost_mate: float = 60.0       # sexual reproduction: paid by EACH parent (0.75·E0)
+    r_mate: float = 2.0           # head-to-head distance for mating (m)
+    min_age: float = 5.0          # maturation time (s): a newborn must not reproduce immediately
+    want_thr: float = 0.5         # a creature wants to reproduce if the brain's request exceeds this threshold
     max_limbs: int = MAX_LIMBS
-    min_pop: int = 0              # >0: nüfus bunun altına inerse hayatta kalanların ağır mutasyonlu kopyaları eklenir (0 = kapalı)
+    min_pop: int = 0              # >0: if the population drops below this, heavily mutated copies of survivors are added (0 = off)
     mut: MutationConfig = field(default_factory=MutationConfig)
-    want_bias: float = 0.0        # rastgele başlangıç beyinlerinde üreme/ısırma çıkışlarının bias'ı (negatif: rastgele çoğalıp enerji yakmasınlar)
-    # yırtıcılık (aşama 3): beslenme genotipi diet in [0,1] (0 = otçul, 1 = etçil)
-    carnivore_frac: float = 0.1   # başlangıçta etçil olanların oranı
-    diet_sigma: float = 0.05      # yavruda diet mutasyonu (gauss)
-    digest_penalty: float = 0.7   # uzmanlaşma bedeli: yem verimi = 1 - p·diet, et verimi = 1 - p·(1-diet)
-    cost_bite: float = 5.0        # her ısırma DENEMESİNİN enerjisi
-    bite_cd: float = 3.0          # iki deneme arası bekleme (sn)
-    r_bite: float = 0.7           # kafa-kafa ısırma menzili (m)
-    k_meat: float = 0.0           # ek 'biyokütle' enerjisi/kg. DİKKAT: >0 enerjiyi yoktan yaratır (kendi yavrusunu yiyen etçil bölünme bedelinden fazla kazanır)
-    meat_frac: float = 0.8        # av başına kazanç = meat_frac · av enerjisi (+ k_meat · kütle); <=1 iken enerji korunur
-    # leş (enerji korunumlu): doğumda ebeveynin kaybettiği enerjinin body_frac'ı canlının 'vücut enerjisi' olur; ölünce
-    # vücut enerjisi (+ ısırıkta avın artan enerjisi) leş olur, carcass_life sn sonra çürür. Etçiller leşi de yer.
-    body_init: float = 40.0       # başlangıç canlılarının vücut enerjisi
+    want_bias: float = 0.0        # bias of the reproduction/bite outputs in random initial brains (negative: so they don't reproduce randomly and burn energy)
+    # predation (stage 3): feeding genotype diet in [0,1] (0 = herbivore, 1 = carnivore)
+    carnivore_frac: float = 0.1   # fraction that are carnivores at the start
+    diet_sigma: float = 0.05      # diet mutation in the offspring (gaussian)
+    digest_penalty: float = 0.7   # specialization cost: food efficiency = 1 - p·diet, meat efficiency = 1 - p·(1-diet)
+    cost_bite: float = 5.0        # energy of each bite ATTEMPT
+    bite_cd: float = 3.0          # cooldown between two attempts (s)
+    r_bite: float = 0.7           # head-to-head bite range (m)
+    k_meat: float = 0.0           # extra 'biomass' energy/kg. CAUTION: >0 creates energy from nothing (a carnivore eating its own offspring gains more than the split cost)
+    meat_frac: float = 0.8        # gain per prey = meat_frac · prey energy (+ k_meat · mass); energy is conserved while <=1
+    # carcass (energy-conserving): at birth body_frac of the energy lost by the parent becomes the creature's 'body energy'; when it dies
+    # the body energy (+ the prey's remaining energy on a bite) becomes a carcass, which rots after carcass_life s. Carnivores also eat carcasses.
+    body_init: float = 40.0       # body energy of the initial creatures
     body_frac: float = 0.5
     carcass_life: float = 60.0
-    brain_gain: float = 1.0       # rastgele başlangıç beyinlerinin ağırlık çarpanı (>1: ilk nesiller daha hareketli)
+    brain_gain: float = 1.0       # weight multiplier for random initial brains (>1: the first generations are more active)
     seed: int = 0
 
 
@@ -148,25 +148,25 @@ class World:
         self.ctrl = np.zeros((B, self.bd.N))
         self.target = np.zeros(B)
         self.tmag = np.zeros(B)
-        # yem
+        # food
         K = c.n_sources
         self.src = self.rng.uniform(0, self.L, (K, 2))
         self.src_dir = self.rng.uniform(0, 2 * math.pi, K)
         self.fpos = np.zeros((0, 2))
         self.fage = np.zeros(0)
-        # sayaçlar
+        # counters
         self.t = 0.0
         self.steps = 0
         self.acc = 0.0
         self.eaten_total = 0
-        self.gained = 0.0            # yemekten gelen toplam enerji (e_max taşması dahil)
-        self.wasted = 0.0            # e_max'ı aşıp boşa giden
+        self.gained = 0.0            # total energy from eating (including e_max overflow)
+        self.wasted = 0.0            # wasted by exceeding e_max
         self.spent_move = 0.0
         self.spent_basal = 0.0
-        self.deaths = []             # (zaman, id, neden)
-        self.dead_energy = 0.0       # ölenlerin ölüm anındaki enerjisi (<= 0), muhasebe için
-        self.repro_paid = 0.0        # üreme için ödenen toplam enerji
-        self.newborn_energy = 0.0    # yavrulara/kurtarılanlara verilen toplam enerji
+        self.deaths = []             # (time, id, cause)
+        self.dead_energy = 0.0       # energy of those who died at the moment of death (<= 0), for accounting
+        self.repro_paid = 0.0        # total energy paid for reproduction
+        self.newborn_energy = 0.0    # total energy given to offspring/rescued
         self.gained_meat = 0.0
         self.gained_carc = 0.0
         self.carc_created = 0.0
@@ -184,7 +184,7 @@ class World:
         self.history = []
         self._last_hist = -1.0
 
-    # ------------------------------------------------------------------ yardımcılar
+    # ------------------------------------------------------------------ helpers
     def _refresh_static(self):
         self.mm = motor_mask(self.bd)
         self.mass = np.where(self.bd.active, self.bd.mass, 0.0).sum(1)
@@ -202,7 +202,7 @@ class World:
     def _mindiff(self, d):
         return d - self.L * np.round(d / self.L)
 
-    # ------------------------------------------------------------------ yem
+    # ------------------------------------------------------------------ food
     def _food_step(self, dt):
         c = self.cfg
         self.fage += dt
@@ -227,15 +227,15 @@ class World:
                 self.fpos = np.concatenate([self.fpos, newp])
                 self.fage = np.concatenate([self.fage, np.zeros(tot)])
 
-    # ------------------------------------------------------------------ yeme, algı, ölüm
+    # ------------------------------------------------------------------ eating, sensing, death
     def _eat(self):
-        """Yemi en yakın canlı (kafa, eat_radius) yer. Verim = 1 - digest_penalty·diet (etçiller yemi kötü sindirir)."""
+        """Food is eaten by the nearest creature (head, eat_radius). Efficiency = 1 - digest_penalty·diet (carnivores digest food poorly)."""
         c = self.cfg
         B = self.pop
         if B == 0:
             return
         head = self.st.x[:, 0]
-        if len(self.cpos):                                                      # leş: verim = 1 - p·(1-diet)
+        if len(self.cpos):                                                      # carcass: efficiency = 1 - p·(1-diet)
             dc = self._mindiff(self.cpos[None, :, :] - head[:, None, :])
             distc = np.hypot(dc[..., 0], dc[..., 1])
             jc = distc.argmin(0)
@@ -270,7 +270,7 @@ class World:
             self.fpos, self.fage = self.fpos[~eaten], self.fage[~eaten]
 
     def _sense(self):
-        """Beynin 'hedef yön' girişi: otçul en yakın yemi, etçil en değerli/yakın canlıyı hedefler (omnivor: skora göre)."""
+        """The brain's 'target direction' input: a herbivore targets the nearest food, a carnivore the most valuable/nearest creature (omnivore: by score)."""
         c = self.cfg
         B = self.pop
         self.target = np.zeros(B)
@@ -318,14 +318,14 @@ class World:
         self.target = np.where(has, np.arctan2(vec[:, 1], vec[:, 0]), 0.0)
         self.tmag = has.astype(float)
 
-    def _eat_and_sense(self):          # (aşama 1-2 uyumluluğu: testler ve eski çağrılar)
+    def _eat_and_sense(self):          # (stage 1-2 compatibility: tests and old calls)
         self._eat()
         self._sense()
 
     def _bite(self):
-        """Isırma: istek > eşik, bekleme bitmiş, enerjisi yeterli VE menzilde (r_bite, kafa-kafa) bir canlı varsa ısırma olur
-        (cost_bite ödenir; havaya ısırmak bedava). Av ölür (kafası yenir), saldırgan et enerjisini alır. Karşılıklı ısırmada enerjisi yüksek olan kazanır (eşitse ikisi de ölür).
-        Dönüş: ölen canlıların maskesi."""
+        """Biting: a bite happens if the request > threshold, the cooldown is over, the creature has enough energy AND there is a creature in range (r_bite, head-to-head)
+        (cost_bite is paid; biting the air is free). The prey dies (its head is eaten), the attacker gets the meat energy. In a mutual bite the one with more energy wins (if equal both die).
+        Returns: mask of the creatures that died."""
         c, B = self.cfg, self.pop
         killed = np.zeros(B, bool)
         self._leftover = np.zeros(B)
@@ -341,7 +341,7 @@ class World:
         dist[np.arange(len(att)), att] = np.inf
         v = dist.argmin(1)
         hit = dist[np.arange(len(att)), v] <= c.r_bite
-        if not hit.any():                      # menzilde canlı yoksa ısırma olayı yok (havaya ısırmak bedava)
+        if not hit.any():                      # no bite event if there is no creature in range (biting the air is free)
             return killed
         att, v = att[hit], v[hit]
         self.energy[att] -= c.cost_bite
@@ -356,7 +356,7 @@ class World:
             b = target[a]
             if killed[a] or killed[b]:
                 continue
-            if target.get(b) == a:                              # karşılıklı
+            if target.get(b) == a:                              # mutual
                 if self.energy[a] > self.energy[b]:
                     out.append((a, b))
                 elif self.energy[a] < self.energy[b]:
@@ -364,7 +364,7 @@ class World:
                 else:
                     killed[a] = killed[b] = True
                     self.kills += 2
-                    self._leftover[a] = self.energy[a] + self.body[a]      # ikisi de ölür: hepsi leş olur
+                    self._leftover[a] = self.energy[a] + self.body[a]      # both die: everything becomes a carcass
                     self._leftover[b] = self.energy[b] + self.body[b]
                     continue
                 w, l = out[-1]
@@ -389,7 +389,7 @@ class World:
         return killed
 
     def _remove(self, alive):
-        """alive (B,) bool dışındakileri sil (satır seçimi: batch genişliği değişmez)."""
+        """Delete everything except alive (B,) bool (row selection: batch width does not change)."""
         idx = np.nonzero(alive)[0]
         self.genomes = [self.genomes[i] for i in idx]
         self.ids, self.born, self.energy = self.ids[idx], self.born[idx], self.energy[idx]
@@ -407,7 +407,7 @@ class World:
             dead = dead | killed
         if dead.any():
             for i in np.nonzero(dead)[0]:
-                cause = "ısırık" if (killed is not None and killed[i]) else "açlık"
+                cause = "bite" if (killed is not None and killed[i]) else "starvation"
                 self.deaths.append((self.t, int(self.ids[i]), cause))
             carc = np.where(killed if killed is not None else np.zeros(self.pop, bool), self._leftover, self.body)
             carc = np.where(dead, carc, 0.0)
@@ -421,10 +421,10 @@ class World:
             self.dead_body += float(self.body[dead].sum())
             self._remove(~dead)
 
-    # ------------------------------------------------------------------ algı: en yakın diğer canlı
+    # ------------------------------------------------------------------ sensing: the nearest other creature
     def _extras(self):
-        """Beyin v2 ek girişleri (B,6): yem yakınlığı, kendi enerjisi, en yakın canlının yönü (gövde çerçevesi, 2),
-        yakınlığı, enerjisi."""
+        """Extra inputs of brain v2 (B,6): food proximity, own energy, direction of the nearest creature (body frame, 2),
+        its proximity, its energy."""
         c, B = self.cfg, self.pop
         ex = np.zeros((B, 6))
         ex[:, 0] = self.fprox
@@ -448,9 +448,9 @@ class World:
             ex[:, 5] = np.where(near, np.clip(self.energy[j] / c.e_max, 0, 1), 0.0)
         return ex
 
-    # ------------------------------------------------------------------ batch genişletme ve doğum
+    # ------------------------------------------------------------------ batch growth and birth
     def _grow(self, n_new: int):
-        """Batch genişliğini (nokta sayısı) n_new'e çıkar; mevcut canlıların durumu korunur (burun noktası son indekse taşınır)."""
+        """Increase the batch width (number of points) to n_new; the state of existing creatures is preserved (the nose point is moved to the last index)."""
         N0, N1, B = self.bd.N, n_new, self.pop
         if N1 <= N0:
             return
@@ -489,7 +489,7 @@ class World:
         return m
 
     def _add(self, children: list, pos: np.ndarray, gens: np.ndarray, energy: float, diet=None, lin=None, body=None):
-        """Yeni canlıları batch'in sonuna ekle."""
+        """Append new creatures to the end of the batch."""
         k = len(children)
         if k == 0:
             return
@@ -601,7 +601,7 @@ class World:
         self.rescued += k
         self._add(kids, self.rng.uniform(0, self.L, (k, 2)), np.zeros(k, dtype=int), c.e_init, kd, kl, np.full(k, c.body_init))
 
-    # ------------------------------------------------------------------ kontrol adımı (50 Hz)
+    # ------------------------------------------------------------------ control step (50 Hz)
     def _control(self):
         dt = self.every * self.pp.dt
         self._wrap_bodies()
@@ -628,7 +628,7 @@ class World:
         self.spent_basal += float(bs.sum())
 
     def advance(self, dt: float, max_steps: int = 100000):
-        """dt saniye (gerçek zamanlı) ilerlet."""
+        """Advance by dt seconds (real time)."""
         self.acc += dt
         n = min(int(self.acc / self.pp.dt), max_steps)
         self.acc -= n * self.pp.dt
@@ -642,7 +642,7 @@ class World:
             self.steps += 1
             self.t = self.steps * self.pp.dt
 
-    # ------------------------------------------------------------------ istatistik
+    # ------------------------------------------------------------------ statistics
     def stats(self) -> dict:
         B = self.pop
         sp = np.linalg.norm(com_velocity(self.st, self.bd), axis=1) if B else np.zeros(0)
@@ -657,29 +657,29 @@ class World:
         return float(self.energy.sum() + self.body.sum() + self.cval.sum())
 
     def balance_residual(self) -> float:
-        """Enerji korunumu: ~0 olmalı. Sistem = canlı enerjisi + vücut enerjisi + leşler."""
+        """Energy conservation: should be ~0. System = creature energy + body energy + carcasses."""
         b = self.energy_balance()
         inflow = b["gained"] + b["meat"] + self.gained_carc + self.carc_created + b["newborn"] + self.newborn_body
         outflow = b["move"] + b["basal"] + b["bite"] + b["repro"] + b["wasted"] + self.carc_eaten_pool + self.carc_decay
         return self.total0 + inflow - outflow - (self.total_energy() + self.dead_energy + self.dead_body)
 
     def energy_balance(self) -> dict:
-        """Muhasebe: başlangıç + yemek + yavru/kurtarma enerjisi - harcamalar - üreme bedeli - e_max taşması = şu anki toplam + ölenlerin son enerjisi."""
+        """Accounting: initial + eating + offspring/rescue energy - expenses - reproduction cost - e_max overflow = current total + the last energy of the dead."""
         return dict(gained=self.gained, wasted=self.wasted, move=self.spent_move, basal=self.spent_basal,
                     repro=self.repro_paid, newborn=self.newborn_energy, meat=self.gained_meat, bite=self.bite_paid)
 
 
 def run_headless(world: World, seconds: float, log=None, every: float = 10.0):
-    """Gerçek zamandan bağımsız çalıştır; her `every` sim-sn'de bir satır yazdır."""
+    """Run independently of real time; print one line every `every` sim-seconds."""
     import time
     t0, nxt = time.time(), 0.0
     while world.t < seconds and world.pop > 0:
         world.advance(0.5)
         if world.t >= nxt:
             s = world.stats()
-            line = (f"t={s['t']:6.1f}s  nüfus {s['pop']:3d}  yem {s['food']:3d}  ort.enerji {s['mean_energy']:6.1f}  "
-                    f"yenen {s['eaten']:4d}  ort.hız {s['mean_speed']:.3f}  doğum {s['births_asex']}+{s['births_sex']}  "
-                    f"nesil {s['mean_gen']:.1f}/{s['max_gen']}  uzuv {s['mean_limbs']:.1f}  ({(time.time()-t0):.0f} sn gerçek)")
+            line = (f"t={s['t']:6.1f}s  pop {s['pop']:3d}  food {s['food']:3d}  mean energy {s['mean_energy']:6.1f}  "
+                    f"eaten {s['eaten']:4d}  mean speed {s['mean_speed']:.3f}  births {s['births_asex']}+{s['births_sex']}  "
+                    f"gen {s['mean_gen']:.1f}/{s['max_gen']}  limbs {s['mean_limbs']:.1f}  ({(time.time()-t0):.0f} s real)")
             if log:
                 log(line)
             nxt += every
@@ -687,8 +687,8 @@ def run_headless(world: World, seconds: float, log=None, every: float = 10.0):
 
 
 def seeded_genomes(paths, n, rng, mut=None, want_bias=(1.0, 0.6, -2.0), max_limbs=24, carnivore_frac=0.2):
-    """Eğitilmiş canlı dosyalarından başlangıç nüfusu. İlk len(paths) birey dosyaların aynısı (beyin v2'ye yükseltilir:
-    üreme istekleri başlangıçta açık, ısırma kapalı), kalanlar bunların mutasyonlu kopyaları (sırayla dağıtılır)."""
+    """Initial population from trained creature files. The first len(paths) individuals are identical to the files (brain upgraded to v2:
+    reproduction requests initially on, bite off), the rest are mutated copies of them (distributed in turn)."""
     mut = mut or MutationConfig()
     base = []
     for p in paths:
@@ -707,7 +707,7 @@ def seeded_genomes(paths, n, rng, mut=None, want_bias=(1.0, 0.6, -2.0), max_limb
         kid.meta = {"physics": PHYSICS_VERSION, "seed": src.meta.get("seed", ""), "lineage": src.meta["lineage"]}
         out.append(kid)
         k += 1
-    for g in out:      # beslenme: etçillerin ısırma isteği başlangıçta açık, otçullarınki kapalı
+    for g in out:      # feeding: carnivores' bite request is initially on, herbivores' is off
         carn = bool(rng.random() < carnivore_frac)
         g.meta["diet"] = 1.0 if carn else 0.0
         g.brain.b2[-1] = 1.0 if carn else -2.0

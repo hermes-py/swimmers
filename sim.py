@@ -1,4 +1,4 @@
-"""Gerçek zamanlı canlı oturumu (fizik + beyin + telemetri) ve kamera."""
+"""Real-time creature session (physics + brain + telemetry) and camera."""
 from __future__ import annotations
 
 import math
@@ -12,7 +12,7 @@ from genome import Genome, build_bodies
 from physics import PhysicsParams, center_of_mass, com_velocity, init_state, motor_mask, step
 
 # --------------------------------------------------------------------------- #
-#  Canlı oturumu: tek bir canlının gerçek zamanlı simülasyonu + telemetri
+#  Live session: real-time simulation of a single creature + telemetry
 # --------------------------------------------------------------------------- #
 class Session:
     def __init__(self, genome: Genome, label: str, heading: float = 0.0):
@@ -20,7 +20,7 @@ class Session:
         self.bd = build_bodies([genome], n_points=genome.body.n + 2)
         self.bb = stack_brains([genome.brain])
         self.pp = PhysicsParams()
-        self.control_every = max(1, int(round(EvalConfig().control_dt / self.pp.dt)))   # eğitimle aynı kontrol hızı
+        self.control_every = max(1, int(round(EvalConfig().control_dt / self.pp.dt)))   # same control rate as training
         self.mm = motor_mask(self.bd)[0]
         self.reset(heading)
 
@@ -33,7 +33,7 @@ class Session:
         self.h0 = heading
         self.energy_total = 0.0
         self.trail = deque(maxlen=240)
-        self.progress_hist = deque(maxlen=120)      # 0.1 sn örnek, son 12 sn
+        self.progress_hist = deque(maxlen=120)      # 0.1 s samples, last 12 s
         self._last_sample = -1.0
         self.target = heading
         self.mag = 1.0
@@ -42,11 +42,11 @@ class Session:
         self._telemetry()
 
     def compute_ctrl(self, target: float, mag: float) -> np.ndarray:
-        """Beyin çıktısı. mag=0: 'komut yok' (beyne sıfır hedef vektörü)."""
+        """Brain output. mag=0: 'no command' (zero target vector given to the brain)."""
         return act(self.st, self.bd, self.bb, np.array([target]), np.array([mag]))
 
     def advance(self, dt: float, target: float, mag: float = 1.0, motors: bool = True):
-        """dt kadar gerçek zamanlı ilerlet. motors=False: motorlar kapalı (beyin devre dışı, canlı süzülür)."""
+        """Advance by dt in real time. motors=False: motors off (brain disabled, creature coasts)."""
         self.target, self.mag, self.motors = target, mag, motors
         self.acc += dt
         n = int(self.acc / self.pp.dt)
@@ -82,7 +82,7 @@ class Session:
 
 
 # --------------------------------------------------------------------------- #
-#  Kamera
+#  Camera
 # --------------------------------------------------------------------------- #
 class Camera:
     def __init__(self):
@@ -108,8 +108,8 @@ class Camera:
 
 
 class WaveSession(Session):
-    """Editörde 'yüzme testi': beyin yerine her kolda gövdeden uca yayılan açı dalgası (PD ile sürülür).
-    Morfolojinin fiziksel olarak itki üretip üretmediğini beyinden bağımsız gösterir."""
+    """'Swim test' in the editor: instead of the brain, an angle wave travelling from the body to the tip of each arm
+    (driven by PD). Shows, independently of the brain, whether the morphology physically produces thrust."""
 
     def __init__(self, genome, label, heading=0.0, freq=1.5, direction=+1, k=0.9):
         super().__init__(genome, label, heading)

@@ -1,23 +1,23 @@
 """
-Faz 5 - Canlı tasarım editörü (pygame). app.py içinde üçüncü mod olarak çalışır (TAB ile ya da E tuşuyla).
+Phase 5 - Creature design editor (pygame). Runs inside app.py as the third mode (with TAB or the E key).
 
-Fare:
-    sol tık (canlı noktası)     seç;  sürükle = o uzvun uzunluğunu ve açısını değiştir (GRİDE YAPIŞIR)
-    sol tık (boş yer)           seçili noktaya yeni uzuv ekle (önizleme hayaleti gösterilir)
-    sağ tık (nokta)             o uzvu ve alt ağacını sil;  sağ tık (boş) seçimi kaldırır
-    orta tuş sürükle / tekerlek kaydır / yakınlaştır (panel üstünde tekerlek: seçili özelliği değiştirir)
-Klavye:
-    Y simetri aç/kapat    O eski omurga modu aç/kapat    M seçili uzvun aynasını ekle    DEL seçili uzvu sil
-    1-8 özellik seç, ↑/↓ değeri değiştir (←/→ özellik değiştir)
-    T yüzme testi         V dalga yönü   Q/E dalga frekansı
-    N yeni canlı          K/L kütüphaneden canlı yükle (kopyası düzenlenir)
-    Ctrl+Z geri al   Ctrl+Y yinele   Ctrl+S kaydet   ENTER: DENE modunda aç (WASD ile kullan)   Z: ortala
+Mouse:
+    left click (creature point)  select;  drag = change that limb's length and angle (SNAPS TO THE GRID)
+    left click (empty space)     add a new limb to the selected point (a preview ghost is shown)
+    right click (point)          delete that limb and its subtree;  right click (empty) clears the selection
+    middle button drag / wheel   pan / zoom (wheel over the panel: changes the selected property)
+Keyboard:
+    Y toggle symmetry    O toggle old spine mode    M add mirror of the selected limb    DEL delete the selected limb
+    1-8 select a property, ↑/↓ change the value (←/→ change property)
+    T swim test          V wave direction   Q/E wave frequency
+    N new creature       K/L load a creature from the library (a copy is edited)
+    Ctrl+Z undo   Ctrl+Y redo   Ctrl+S save   ENTER: open in PLAY mode (use with WASD)   Z: center
 
-Grid: açı 24 adım, uzunluk/kütle/kalınlık/tork/sönüm/sınırlar kademelidir (genome.GRID). Kutupsal kılavuz
-(halkalar = uzunluk kademeleri, ışınlar = açı adımları) seçili noktanın etrafında görünür.
+Grid: angle 24 steps; length/mass/width/torque/damping/limits are discrete levels (genome.GRID). A polar guide
+(rings = length levels, rays = angle steps) is shown around the selected point.
 
-Not: Beyin vücuttan bağımsız bir MLP'dir. Yeni tasarlanan gövdeye kopyalanan beyin onu bilmediği için
-beklenen gibi yüzmez; 'Yüzme testi' beyinsiz, açı dalgasıyla gövdenin itki üretip üretmediğini gösterir.
+Note: The brain is an MLP independent of the body. A brain copied onto a newly designed body does not know it,
+so it will not swim as expected; the 'Swim test' shows, without a brain and with an angle wave, whether the body produces thrust.
 """
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ from physics import PHYSICS_VERSION
 from sim import Camera, Session, WaveSession
 from ui import *
 
-PROPS = [("theta", "Açı (dinlenme)"), ("length", "Uzunluk"), ("mass", "Kütle"), ("width", "Kalınlık"),
-         ("tau", "Tork kapasitesi"), ("damp", "Eklem sönümü"), ("lo", "Alt sınır"), ("hi", "Üst sınır")]
+PROPS = [("theta", "Angle (rest)"), ("length", "Length"), ("mass", "Mass"), ("width", "Thickness"),
+         ("tau", "Torque capacity"), ("damp", "Joint damping"), ("lo", "Lower limit"), ("hi", "Upper limit")]
 ANGLE_STEP = 2 * math.pi / GRID["angle_steps"]
 
 
@@ -65,15 +65,15 @@ class Editor:
         self.tcam = Camera()
         self.body = blank_body()
         self.brain = random_brain(app.rng)
-        self.name = "yeni tasarım"
-        self.brain_from = "rastgele beyin"
+        self.name = "new design"
+        self.brain_from = "random brain"
         self.sel = -1
         self.hover = None
         self.prop = "length"
         self.sym = False
         self.pairs: dict[int, int] = {}
         self.undo_stack, self.redo_stack = [], []
-        self.drag = None            # (indeks, başlangıç ekran konumu)
+        self.drag = None            # (index, starting screen position)
         self.drag_moved = False
         self.panning = False
         self.test = None
@@ -83,9 +83,9 @@ class Editor:
         self._dirty = True
         self.mouse = (0, 0)
         self.lib_i = 0
-        self.confirm = False         # 'Eğitime gönder' onay penceresi açık mı
+        self.confirm = False         # is the 'Send to training' confirmation dialog open
 
-    # ------------------------------------------------------------------ durum
+    # ------------------------------------------------------------------ state
     def say(self, s, secs=3.5):
         self.msg, self.msg_until = s, time.time() + secs
 
@@ -97,7 +97,7 @@ class Editor:
 
     def open_from(self, genome: Genome, name: str):
         self.body, self.brain = genome.body.copy(), genome.brain.copy()
-        self.name = f"{name} (kopya)"
+        self.name = f"{name} (copy)"
         self.brain_from = name
         self.sel, self.pairs = -1, {}
         self.undo_stack, self.redo_stack = [], []
@@ -107,13 +107,13 @@ class Editor:
 
     def new_blank(self):
         self.body, self.brain = blank_body(), random_brain(self.app.rng)
-        self.name, self.brain_from = "yeni tasarım", "rastgele beyin"
+        self.name, self.brain_from = "new design", "random brain"
         self.sel, self.pairs = -1, {}
         self.undo_stack, self.redo_stack = [], []
         self.test = None
         self._dirty = True
         self.center()
-        self.say("yeni canlı: kafa + 2 uzuv (gövde yönü = kafa)")
+        self.say("new creature: head + 2 limbs (body direction = head)")
 
     def center(self):
         x = self.sess().st.x[0][: self.body.n + 1]
@@ -138,14 +138,14 @@ class Editor:
             self.redo_stack.append((self.body.copy(), dict(self.pairs), self.sel))
             self._restore(self.undo_stack.pop())
         else:
-            self.say("geri alınacak bir şey yok")
+            self.say("nothing to undo")
 
     def do_redo(self):
         if self.redo_stack:
             self.undo_stack.append((self.body.copy(), dict(self.pairs), self.sel))
             self._restore(self.redo_stack.pop())
 
-    # ------------------------------------------------------------------ geometri
+    # ------------------------------------------------------------------ geometry
     def pos(self):
         return self.sess().st.x[0]
 
@@ -155,9 +155,9 @@ class Editor:
         return math.atan2(d[1], d[0])
 
     def ref_for_parent(self, p):
-        """Parent noktasına eklenecek bir uzvun açı referansı (mutlak yön)."""
+        """Angle reference (absolute direction) of a limb to be added to the parent point."""
         if p == 0:
-            return self.bone_angle(1) if self.body.legacy_spine else HEAD_UP    # yeni modda kafa yönü = referans
+            return self.bone_angle(1) if self.body.legacy_spine else HEAD_UP    # in the new mode head direction = reference
         return self.bone_angle(p)
 
     def ref_of(self, i):
@@ -166,7 +166,7 @@ class Editor:
         return self.ref_for_parent(int(self.body.parent[i]))
 
     def snap(self, pivot, ref, pw):
-        """Dünya konumunu (açı kademesi, uzunluk kademesi)ne yapıştır."""
+        """Snap a world position to (angle level, length level)."""
         v = np.asarray(pw) - self.pos()[pivot]
         dist = float(np.hypot(*v))
         if dist < 0.04:
@@ -191,7 +191,7 @@ class Editor:
                 best, bd_ = i, d
         return best
 
-    # ------------------------------------------------------------------ düzenleme işlemleri
+    # ------------------------------------------------------------------ editing operations
     def set_field(self, i, field, level):
         b = self.body
         arr = getattr(b, field)
@@ -213,21 +213,21 @@ class Editor:
 
     def change_level(self, delta):
         if self.sel < 0:
-            self.say("önce bir nokta seç")
+            self.say("select a point first")
             return
         f = self.prop
         if self.sel == 0 and f != "mass":
-            self.say("kafanın sadece kütlesi ayarlanır")
+            self.say("only the head's mass can be adjusted")
             return
         if self.sel == 1 and f in ("tau", "damp", "lo", "hi") and self.body.legacy_spine:
-            self.say("kemik 1 pasif omurgadır: motor/eklem özellikleri kullanılmaz")
+            self.say("bone 1 is a passive spine: motor/joint properties are not used")
         self.push()
         self.set_field(self.sel, f, int(getattr(self.body, f)[self.sel]) + delta)
 
     def add_at(self, pw):
         b = self.body
         if b.n >= MAX_LIMBS:
-            self.say(f"en fazla {MAX_LIMBS} uzuv")
+            self.say(f"at most {MAX_LIMBS} limbs")
             return
         s = self.sel
         sn = self.snap(s, self.ref_for_parent(s), pw)
@@ -242,7 +242,7 @@ class Editor:
         if self.sym and nb.n < MAX_LIMBS:
             tp = self.pairs.get(s, s)
             tk = (A - k) % A
-            if not (tp == s and tk == k):                  # eksen üzerindeyse ayna aynı yere düşer
+            if not (tp == s and tk == k):                  # if it is on the axis the mirror falls in the same place
                 nb = add_limb_at(nb, tp, tk, li, template=new)
                 t = nb.n
                 nb.lo[t], nb.hi[t] = nb.hi[new], nb.lo[new]
@@ -252,29 +252,29 @@ class Editor:
 
     def mirror_selected(self):
         if self.sel < self.body.first_free:
-            self.say("ayna için bir uzuv seç" if not self.body.legacy_spine else "ayna için omurga dışında bir uzuv seç")
+            self.say("select a limb to mirror" if not self.body.legacy_spine else "select a limb other than the spine to mirror")
             return
         r = mirror_at(self.body, self.sel)
         if r is None:
-            self.say(f"aynalanamadı (en fazla {MAX_LIMBS} uzuv)")
+            self.say(f"could not be mirrored (at most {MAX_LIMBS} limbs)")
             return
         self.push()
         self.body = r[0]
         for old, new in r[1].items():
             self.pairs[old], self.pairs[new] = new, old
         self._dirty = True
-        self.say("ayna eklendi")
+        self.say("mirror added")
 
     def delete_at(self, i):
         if i < self.body.first_free:
-            self.say("kafa silinemez" if not self.body.legacy_spine else "kafa ve kemik 1 (omurga) silinemez")
+            self.say("the head cannot be deleted" if not self.body.legacy_spine else "the head and bone 1 (spine) cannot be deleted")
             return
         rm = set(subtree(self.body, i))
         if self.sym and i in self.pairs:
             rm |= set(subtree(self.body, self.pairs[i]))
         r = delete_set(self.body, rm)
         if r is None:
-            self.say(f"silinemez (en az {self.body.min_n} uzuv kalmalı)")
+            self.say(f"cannot be deleted (at least {self.body.min_n} limbs must remain)")
             return
         self.push()
         self.body, remap = r
@@ -284,22 +284,22 @@ class Editor:
 
     def toggle_sym(self):
         self.sym = not self.sym
-        self.say("simetri AÇIK: eklenen/değiştirilen uzuvların aynası da güncellenir (eksen: kafanın yönü)" if self.sym
-                 else "simetri kapalı")
+        self.say("symmetry ON: the mirror of added/changed limbs is updated too (axis: head direction)" if self.sym
+                 else "symmetry off")
 
     def toggle_spine(self):
         self.push()
         self.body.legacy_spine = not self.body.legacy_spine
         self._dirty = True
-        self.say("ESKİ omurga modu: kemik 1 pasif, gövde yönünü o belirler (kafaya bağlı uzuvların açıları değişir!)"
-                 if self.body.legacy_spine else "yeni mod: gövde yönü = kafanın yönü, tüm uzuvlar motorlu")
+        self.say("OLD spine mode: bone 1 is passive, it determines the body direction (angles of limbs attached to the head change!)"
+                 if self.body.legacy_spine else "new mode: body direction = head direction, all limbs are motorized")
 
     def toggle_test(self):
         if self.test is not None:
             self.test = None
             return
         g = Genome(self.body.copy(), self.brain.copy())
-        self.test = WaveSession(g, "yüzme testi", heading=HEAD_UP, freq=self.test_freq, direction=self.test_dir)
+        self.test = WaveSession(g, "swim test", heading=HEAD_UP, freq=self.test_freq, direction=self.test_dir)
         self.tcam = Camera()
 
     def save(self):
@@ -310,7 +310,7 @@ class Editor:
         path = os.path.join(self.app.out, f"design_{i:03d}.json")
         save_json(self.genome(), path)
         self.app.rescan()
-        self.say(f"kaydedildi: {path}", 5.0)
+        self.say(f"saved: {path}", 5.0)
 
     def genome(self) -> Genome:
         return Genome(self.body.copy(), self.brain.copy(), {"designed": True, "physics": PHYSICS_VERSION})
@@ -347,9 +347,9 @@ class Editor:
         self.lib_i = (self.lib_i + d) % len(lib)
         item = lib[self.lib_i]
         self.open_from(item["genome"], item["name"])
-        self.say(f"yüklendi: {item['name']} (kopya düzenleniyor)")
+        self.say(f"loaded: {item['name']} (editing a copy)")
 
-    # ------------------------------------------------------------------ panel yerleşimi
+    # ------------------------------------------------------------------ panel layout
     def layout_panel(self, panel):
         f = self.app.fonts
         pw = panel.w
@@ -357,13 +357,13 @@ class Editor:
         bh = int(f.normal.get_height() * 1.45)
         gap = 5
         bw = (pw - 24 - gap) // 2
-        sym_label = f"Simetri: {'AÇIK' if self.sym else 'kapalı'} (Y)"
-        specs = [(sym_label, self.toggle_sym), ("Ayna ekle (M)", self.mirror_selected),
-                 (("Testi durdur" if self.test else "Yüzme testi") + " (T)", self.toggle_test), ("Yeni (N)", self.new_blank),
-                 (f"Eski omurga modu: {'AÇIK' if self.body.legacy_spine else 'kapalı'} (O)", self.toggle_spine),
-                 ("Geri al", self.do_undo), ("Yinele", self.do_redo),
-                 ("Kaydet", self.save), ("DENE'de aç ↵", self.send_to_play),
-                 ("Eğitime gönder", self.ask_training), ("Ortala (Z)", self.center)]
+        sym_label = f"Symmetry: {'ON' if self.sym else 'off'} (Y)"
+        specs = [(sym_label, self.toggle_sym), ("Add mirror (M)", self.mirror_selected),
+                 (("Stop test" if self.test else "Swim test") + " (T)", self.toggle_test), ("New (N)", self.new_blank),
+                 (f"Old spine mode: {'ON' if self.body.legacy_spine else 'off'} (O)", self.toggle_spine),
+                 ("Undo", self.do_undo), ("Redo", self.do_redo),
+                 ("Save", self.save), ("Open in PLAY ↵", self.send_to_play),
+                 ("Send to training", self.ask_training), ("Center (Z)", self.center)]
         buttons = []
         for n, (label, fn) in enumerate(specs):
             r = pygame.Rect(12 + (n % 2) * (bw + gap), y + (n // 2) * (bh + gap), bw, bh)
@@ -371,7 +371,7 @@ class Editor:
         y += ((len(specs) + 1) // 2) * (bh + gap) + 6
         rows = []
         if self.test is None:
-            y += f.small.get_height() + 4         # "Seçili: ..." başlığı için yer
+            y += f.small.get_height() + 4         # room for the "Selected: ..." heading
             rh = int(f.normal.get_height() * 1.35)
             fields = PROPS if self.sel >= 1 else (PROPS[2:3] if self.sel == 0 else [])
             for field, label in fields:
@@ -383,7 +383,7 @@ class Editor:
                 y += rh + 2
         return buttons, rows, y
 
-    # ------------------------------------------------------------------ olaylar
+    # ------------------------------------------------------------------ events
     def handle_event(self, e, view, panel) -> bool:
         wh = view.size
         if self.confirm:
@@ -544,7 +544,7 @@ class Editor:
             self.test.advance(min(dt, 0.1) * self.app.time_scale, 0.0, 1.0, True)
             self.tcam.update(self.test, view_wh, min(dt, 0.1))
 
-    # ------------------------------------------------------------------ çizim
+    # ------------------------------------------------------------------ drawing
     def draw(self, vsurf, psurf, view, panel):
         if self.test is not None:
             self.app.draw_world(vsurf, self.test, self.tcam)
@@ -575,7 +575,7 @@ class Editor:
         sess = self.sess()
         x = self.pos()
         b = self.body
-        # kutupsal kılavuz (seçili nokta / sürüklenen uzvun pivotu)
+        # polar guide (the selected point / the pivot of the limb being dragged)
         pivot = ref = None
         if self.drag and self.drag_moved:
             pivot, ref = int(b.parent[self.drag[0]]), self.ref_of(self.drag[0])
@@ -595,7 +595,7 @@ class Editor:
                 hot = snapped is not None and snapped[0] == k
                 col = (230, 200, 90) if hot else ((70, 120, 160) if k % 6 == 0 else (34, 64, 92))
                 pygame.draw.line(surf, col, pc, (pc[0] + math.cos(a) * Rmax, pc[1] - math.sin(a) * Rmax), 2 if hot else 1)
-        # seçili eklemin açı sınırları (kama)
+        # angle limits of the selected joint (wedge)
         if self.sel >= self.body.first_free:
             i = self.sel
             p = int(b.parent[i])
@@ -608,7 +608,7 @@ class Editor:
             wedge = pygame.Surface((vw, vh), pygame.SRCALPHA)
             pygame.draw.polygon(wedge, (255, 210, 90, 55), pts)
             surf.blit(wedge, (0, 0))
-        # hayalet (eklenecek uzuv önizlemesi)
+        # ghost (preview of the limb to be added)
         if self.sel >= 0 and self.hover is None and snapped is not None and not (self.drag and self.drag_moved):
             k, li = snapped
             a = self.ref_for_parent(self.sel) + k * ANGLE_STEP
@@ -620,25 +620,25 @@ class Editor:
             pygame.draw.circle(surf, col, p1, 6, 2)
             text(surf, f.small, f"{L:.2f} m · {math.degrees(wrap_pi(k * ANGLE_STEP)):.0f}°", (p1[0] + 8, p1[1] - 8), col)
         draw_creature(surf, sess, cam, wh)
-        # seçim, hover, indeksler
+        # selection, hover, indices
         for i in range(b.n + 1):
             sp = cam.w2s(x[i], wh)
             if i == self.sel:
                 pygame.draw.circle(surf, (255, 220, 80), sp, max(13, int(0.12 * sc)), 3)
             elif i == self.hover:
                 pygame.draw.circle(surf, (160, 200, 255), sp, max(12, int(0.11 * sc)), 2)
-            label = "K" if i == 0 else str(i)
+            label = "H" if i == 0 else str(i)
             text(surf, f.small, label, (sp[0] + 9, sp[1] - 18), (255, 240, 170) if i == self.sel else C_DIM)
             if i in self.pairs and self.sym and i >= 1:
                 pygame.draw.circle(surf, (190, 140, 255), (sp[0] + 4, sp[1] + 14), 3)
-        # ipuçları
-        hint = ("sol tık: seç/sürükle · boşa tık: seçili noktaya uzuv ekle · sağ tık: sil · "
-                "tekerlek: zoom · orta tuş: kaydır")
+        # hints
+        hint = ("left click: select/drag · click on empty space: add a limb to the selected point · right click: delete · "
+                "wheel: zoom · middle button: pan")
         text(surf, f.small, hint, (10, 8), C_DIM)
         if self.msg and time.time() < self.msg_until:
             text(surf, f.normal, self.msg, (10, 8 + f.small.get_height() + 6), (255, 220, 120))
         if self.sym:
-            text(surf, f.normal, "SİMETRİ AÇIK", (vw - 10, 8), (190, 140, 255), "topright")
+            text(surf, f.normal, "SYMMETRY ON", (vw - 10, 8), (190, 140, 255), "topright")
 
     def draw_modal(self, surf):
         f = self.app.fonts
@@ -648,17 +648,17 @@ class Editor:
         box, b1, b2, b3 = self.modal_rects(surf.get_size())
         pygame.draw.rect(surf, (18, 26, 40), box, border_radius=10)
         pygame.draw.rect(surf, (190, 140, 255), box, 2, border_radius=10)
-        text(surf, f.big, "Eğitime gönder", (box.x + 18, box.y + 12), (190, 140, 255))
+        text(surf, f.big, "Send to training", (box.x + 18, box.y + 12), (190, 140, 255))
         y = box.y + 14 + f.big.get_height()
-        lines = [f"Tasarım ({self.body.n} uzuv) yeni bir eğitim koşusunun başlangıcı olur.",
-                 "Şu anki eğitim durdurulup kaydedilir; yeni koşu ayrı bir klasöre yazılır.",
-                 "Sabit vücut: sadece beyin evrimleşir (tasarımını aynen korur).",
-                 "Evrimleşen vücut: tasarım başlangıç noktasıdır, uzuvlar mutasyona uğrar."]
+        lines = [f"The design ({self.body.n} limbs) becomes the starting point of a new training run.",
+                 "The current training is stopped and saved; the new run is written to a separate folder.",
+                 "Fixed body: only the brain evolves (your design is preserved exactly).",
+                 "Evolving body: the design is the starting point, limbs get mutated."]
         for ln in lines:
             text(surf, f.small, ln, (box.x + 18, y + 4), C_TEXT)
             y += f.small.get_height() + 3
         mp = pygame.mouse.get_pos()
-        for r, label in ((b1, "1 · Vücut SABİT — sadece beyin evrimleşsin"), (b2, "2 · Vücut da evrimleşsin"), (b3, "İptal")):
+        for r, label in ((b1, "1 · FIXED body — let only the brain evolve"), (b2, "2 · Let the body evolve too"), (b3, "Cancel")):
             on = r.collidepoint(mp)
             pygame.draw.rect(surf, (52, 70, 104) if on else (30, 42, 62), r, border_radius=6)
             pygame.draw.rect(surf, C_PANEL_LINE, r, 1, border_radius=6)
@@ -671,11 +671,11 @@ class Editor:
         tl = t.tele
         hd = np.array([math.cos(tl["heading"]), math.sin(tl["heading"])])
         fwd = float(tl["vel"] @ hd)
-        text(surf, f.big, "YÜZME TESTİ (beyinsiz açı dalgası)", (10, 8), C_VEL)
-        text(surf, f.normal, f"hız {tl['speed']:.2f} m/s · gövde yönünde {fwd:+.2f} m/s · dalga frekansı {self.test_freq:.2f} Hz · "
-                             f"yön {'baştan uca' if self.test_dir > 0 else 'uçtan başa'}",
+        text(surf, f.big, "SWIM TEST (brainless angle wave)", (10, 8), C_VEL)
+        text(surf, f.normal, f"speed {tl['speed']:.2f} m/s · along the body direction {fwd:+.2f} m/s · wave frequency {self.test_freq:.2f} Hz · "
+                             f"direction {'base to tip' if self.test_dir > 0 else 'tip to base'}",
              (10, 8 + f.big.get_height() + 4), C_TEXT)
-        text(surf, f.small, "T: testi bitir · V: dalga yönü · Q/E: frekans · hız tuşları +/-", (10, 8 + f.big.get_height() + f.normal.get_height() + 10), C_DIM)
+        text(surf, f.small, "T: end test · V: wave direction · Q/E: frequency · speed keys +/-", (10, 8 + f.big.get_height() + f.normal.get_height() + 10), C_DIM)
         if self.msg and time.time() < self.msg_until:
             text(surf, f.normal, self.msg, (10, vh - f.normal.get_height() - 10), (255, 220, 120))
 
@@ -683,13 +683,13 @@ class Editor:
         f = self.app.fonts
         pw, ph = surf.get_size()
         pygame.draw.line(surf, C_PANEL_LINE, (0, 0), (0, ph), 2)
-        text(surf, f.big, "EDİTÖR", (12, 8), (190, 140, 255))
+        text(surf, f.big, "EDITOR", (12, 8), (190, 140, 255))
         y = 8 + f.big.get_height() + 2
         text(surf, f.small, self.name[:44], (12, y), C_DIM)
         y += f.small.get_height()
         b = self.body
         mass = sum(level_value("mass", int(b.mass[i])) for i in range(b.n + 1))
-        text(surf, f.small, f"uzuv {b.n}/{MAX_LIMBS} · toplam kütle {mass:.1f} kg · beyin: {self.brain_from}"[:60], (12, y), C_DIM)
+        text(surf, f.small, f"limbs {b.n}/{MAX_LIMBS} · total mass {mass:.1f} kg · brain: {self.brain_from}"[:60], (12, y), C_DIM)
         buttons, rows, y = self.layout_panel(panel)
         mp = pygame.mouse.get_pos()
         lp = (mp[0] - panel.x, mp[1] - panel.y)
@@ -699,7 +699,7 @@ class Editor:
             pygame.draw.rect(surf, C_PANEL_LINE, r, 1, border_radius=6)
             text(surf, f.small, label, r.center, C_TEXT, "center")
         if self.test is None:
-            title = "Kafa" if self.sel == 0 else (f"Seçili uzuv {self.sel}" + (("  (eski mod: pasif omurga)" if self.body.legacy_spine else "") if self.sel == 1 else "")) if self.sel > 0 else "Bir nokta seç"
+            title = "Head" if self.sel == 0 else (f"Selected limb {self.sel}" + (("  (old mode: passive spine)" if self.body.legacy_spine else "") if self.sel == 1 else "")) if self.sel > 0 else "Select a point"
             ty = rows[0][2].y - f.small.get_height() - 3 if rows else y + 4
             text(surf, f.small, title, (12, ty), C_HEAD)
             for field, label, r, minus, plus in rows:
@@ -715,20 +715,20 @@ class Editor:
                     pygame.draw.rect(surf, (52, 70, 100) if rc.collidepoint(lp) else (34, 46, 68), rc, border_radius=4)
                     text(surf, f.normal, s_, rc.center, C_TEXT, "center")
             y = (rows[-1][2].bottom if rows else y) + 10
-            for ln in ("Yapışma: açı 24 adım (15°), uzunluk 8 kademe.",
-                       "Boşa tıklayınca seçili noktaya uzuv eklenir.",
-                       "↑/↓ ya da tekerlek: seçili özellik değeri;",
-                       "←/→ ya da 1-8: özellik seç.",
-                       "K/L: kütüphaneden canlı yükle (kopya)."):
+            for ln in ("Snapping: angle 24 steps (15°), length 8 levels.",
+                       "Clicking on empty space adds a limb to the selected point.",
+                       "↑/↓ or wheel: value of the selected property;",
+                       "←/→ or 1-8: select a property.",
+                       "K/L: load a creature from the library (copy)."):
                 if y + f.small.get_height() > ph - 4:
                     break
                 text(surf, f.small, ln, (12, y), C_DIM)
                 y += f.small.get_height() + 1
         else:
             tl = self.test.tele
-            lines = [f"hız: {tl['speed']:.2f} m/s", f"t = {tl['t']:.1f} s", "",
-                     "Bu test beyin kullanmaz: her kolda", "gövdeden uca yayılan açı dalgası", "uygulanır. İtki üretiyorsa",
-                     "gövde suda yüzebilir demektir.", "", "T: testi bitir ve düzenlemeye dön"]
+            lines = [f"speed: {tl['speed']:.2f} m/s", f"t = {tl['t']:.1f} s", "",
+                     "This test does not use a brain: an angle", "wave travelling from the body to the tip", "is applied to every arm. If it produces",
+                     "thrust, the body can swim in water.", "", "T: end the test and return to editing"]
             for ln in lines:
                 text(surf, f.small, ln, (12, y), C_TEXT)
                 y += f.small.get_height() + 2

@@ -1,11 +1,11 @@
 """
-Faz 2 - Genom: BodyGenome + BrainGenome, grid kuantizasyonu, mutasyon, çaprazlama, JSON.
+Phase 2 - Genome: BodyGenome + BrainGenome, grid quantization, mutation, crossover, JSON.
 
-Vücut genomu tamamen TAMSAYI kademelerden (grid) oluşur; gerçek değerler GRID tablosundan okunur.
-Tabloyu değiştirmek (kademe sayısı / değerler) tek yerden, GRID'den yapılır.
+The body genome consists entirely of INTEGER levels (grid); real values are read from the GRID table.
+Changing the table (number of levels / values) is done in one place, in GRID.
 
-Ağaç kuralı: parent[i] < i. Kemik 1 daima kafaya (0) bağlıdır ve gövde yönünü tanımlar.
-Bu kural sadece üretim/mutasyon kodunda uygulanır; veri yapısı genel bir "kemik listesi"dir.
+Tree rule: parent[i] < i. Bone 1 is always attached to the head (0) and defines the body direction.
+This rule is enforced only in the generation/mutation code; the data structure is a general "bone list".
 """
 from __future__ import annotations
 
@@ -16,16 +16,16 @@ import numpy as np
 from physics import MAX_LIMBS, make_bodies
 
 # --------------------------------------------------------------------------- #
-#  GRID: kademeli değerler (istediğin gibi değiştir)
+#  GRID: discrete values (change as you like)
 # --------------------------------------------------------------------------- #
 GRID = dict(
-    angle_steps=24,                                   # 24 adım = 15 derece
-    length=[0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.85, 1.0],  # 8 kademe
-    mass=[0.3, 0.5, 0.75, 1.0, 1.5, 2.0],             # 6 kademe
-    width=[0.05, 0.10, 0.15, 0.25],                   # kemik kalınlığı (sürükleme yüzeyi)
-    tau=[1.0, 2.0, 3.0, 5.0, 8.0, 12.0],              # tork kapasitesi
-    damp=[0.05, 0.15, 0.3, 0.6],                      # eklem sönümü
-    limit_step=0.2, limit_levels=8,                   # eklem açı sınırı: (k+1)*0.2 rad, k=0..7
+    angle_steps=24,                                   # 24 steps = 15 degrees
+    length=[0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.85, 1.0],  # 8 levels
+    mass=[0.3, 0.5, 0.75, 1.0, 1.5, 2.0],             # 6 levels
+    width=[0.05, 0.10, 0.15, 0.25],                   # bone thickness (drag surface)
+    tau=[1.0, 2.0, 3.0, 5.0, 8.0, 12.0],              # torque capacity
+    damp=[0.05, 0.15, 0.3, 0.6],                      # joint damping
+    limit_step=0.2, limit_levels=8,                   # joint angle limit: (k+1)*0.2 rad, k=0..7
 )
 FIELDS = ("theta", "length", "mass", "width", "tau", "damp", "lo", "hi")
 MIN_LIMBS = 2
@@ -53,17 +53,17 @@ def level_value(f: str, k: int) -> float:
 # --------------------------------------------------------------------------- #
 @dataclass
 class BodyGenome:
-    parent: np.ndarray            # (n+1,) int; [0] kullanılmaz
-    theta: np.ndarray             # (n+1,) açı kademesi (referans kemiğe göre dinlenme açısı)
+    parent: np.ndarray            # (n+1,) int; [0] unused
+    theta: np.ndarray             # (n+1,) angle level (rest angle relative to the reference bone)
     length: np.ndarray
-    mass: np.ndarray              # [0] = kafa kütlesi
+    mass: np.ndarray              # [0] = head mass
     width: np.ndarray
     tau: np.ndarray
     damp: np.ndarray
-    lo: np.ndarray                # alt sınır = -(lo+1)*step
-    hi: np.ndarray                # üst sınır = +(hi+1)*step
-    legacy_spine: bool = True      # True: ESKİ mod (kemik 1 pasif omurga, gövde yönünü o belirler). Yeni canlılar False:
-                                   # gövde yönü kafanın yönü, kemik 1 dahil tüm uzuvlar motorlu. Bayrağı olmayan eski dosyalar True sayılır.
+    lo: np.ndarray                # lower limit = -(lo+1)*step
+    hi: np.ndarray                # upper limit = +(hi+1)*step
+    legacy_spine: bool = True      # True: OLD mode (bone 1 is a passive spine, it determines the body direction). New creatures False:
+                                   # body direction is the head's direction, all limbs including bone 1 are motorized. Old files without the flag count as True.
 
     @property
     def n(self) -> int:
@@ -71,13 +71,13 @@ class BodyGenome:
 
     @property
     def first_free(self) -> int:
-        """Silinebilen/aynalanabilen ilk uzuv. Eski modda kemik 1 pasif omurgadır (2); yeni (kafa yönü) modda
-        kemik 1 de sıradan bir uzuvdur (1)."""
+        """First limb that can be deleted/mirrored. In the old mode bone 1 is the passive spine (2); in the new
+        (head direction) mode bone 1 is an ordinary limb too (1)."""
         return 2 if self.legacy_spine else 1
 
     @property
     def min_n(self) -> int:
-        """Yapısal en az uzuv sayısı (yeni modda 1; eski modda MIN_LIMBS)."""
+        """Structural minimum limb count (1 in the new mode; MIN_LIMBS in the old mode)."""
         return MIN_LIMBS if self.legacy_spine else 1
 
     def copy(self) -> "BodyGenome":
@@ -87,14 +87,14 @@ class BodyGenome:
         return [j for j in range(1, self.n + 1) if self.parent[j] == i]
 
     def validate(self):
-        assert 1 <= self.n <= MAX_LIMBS, f"uzuv sayısı {self.n}"
+        assert 1 <= self.n <= MAX_LIMBS, f"limb count {self.n}"
         assert self.parent[1] == 0
         for i in range(1, self.n + 1):
-            assert 0 <= self.parent[i] < i, "ağaç sırası bozuk"
+            assert 0 <= self.parent[i] < i, "tree order broken"
         for f in FIELDS:
             a = getattr(self, f)
             assert len(a) == self.n + 1
-            assert a.min() >= 0 and a.max() < n_levels(f), f"{f} grid dışında"
+            assert a.min() >= 0 and a.max() < n_levels(f), f"{f} outside the grid"
 
     # --- JSON ---
     def to_dict(self) -> dict:
@@ -113,7 +113,7 @@ class BodyGenome:
             limbs.append(d)
         return {"n_limbs": self.n, "legacy_spine": bool(self.legacy_spine), "head_mass": int(self.mass[0]),
                 "head_mass_value": level_value("mass", self.mass[0]), "limbs": limbs,
-                "_note": "Kademe (grid) indeksleri esastır; 'values' sadece okunabilirlik içindir."}
+                "_note": "Level (grid) indices are authoritative; 'values' is for readability only."}
 
     @staticmethod
     def from_dict(d: dict) -> "BodyGenome":
@@ -138,13 +138,13 @@ def random_body(rng: np.random.Generator, n_min=3, n_max=8, legacy_spine: bool =
     arr = {f: rng.integers(0, n_levels(f), n + 1) for f in FIELDS}
     for f in FIELDS:
         if f != "mass":
-            arr[f][0] = 0          # kafanın sadece kütlesi anlamlı
+            arr[f][0] = 0          # only the head's mass is meaningful
     b = BodyGenome(parent=parent, legacy_spine=legacy_spine, **arr)
     b.validate()
     return b
 
 
-# --- yapısal mutasyonlar ---------------------------------------------------- #
+# --- structural mutations --------------------------------------------------- #
 def _append_limb(b: BodyGenome, parent: int, vals: dict) -> BodyGenome:
     out = BodyGenome(parent=np.append(b.parent, parent), legacy_spine=b.legacy_spine,
                      **{f: np.append(getattr(b, f), vals[f]) for f in FIELDS})
@@ -161,7 +161,7 @@ def add_limb(b: BodyGenome, rng) -> BodyGenome:
 
 
 def remove_limb(b: BodyGenome, rng, min_limbs: int = MIN_LIMBS) -> BodyGenome:
-    """Sadece yaprak (çocuğu olmayan) ve kemik 1 olmayan bir uzuv silinir; indeksler kaydırılır."""
+    """Only a leaf (childless) limb that is not bone 1 is deleted; indices are shifted."""
     if b.n <= max(min_limbs, b.min_n):
         return b
     leaves = [i for i in range(b.first_free, b.n + 1) if not b.children(i)]
@@ -176,7 +176,7 @@ def remove_limb(b: BodyGenome, rng, min_limbs: int = MIN_LIMBS) -> BodyGenome:
 
 
 def subtree(b: BodyGenome, s: int) -> list:
-    """s uzvu ve tüm torunları (artan indeks sırasıyla)."""
+    """Limb s and all its descendants (in increasing index order)."""
     sub = [s]
     for i in range(s + 1, b.n + 1):
         if b.parent[i] in sub:
@@ -185,8 +185,8 @@ def subtree(b: BodyGenome, s: int) -> list:
 
 
 def mirror_at(b: BodyGenome, s: int):
-    """s uzvunu (alt ağacıyla) aynı eklem noktasına AYNALAYARAK ekle -> bilateral simetri.
-    Dönüş: (yeni_vücut, {eski_indeks: ayna_indeks}) ya da sığmıyorsa None. Kemik 1 aynalanamaz."""
+    """Add limb s (with its subtree) at the same joint point as a MIRROR image -> bilateral symmetry.
+    Returns: (new_body, {old_index: mirror_index}) or None if it doesn't fit. Bone 1 cannot be mirrored (in the old mode)."""
     if s < b.first_free or s > b.n:
         return None
     sub = subtree(b, s)
@@ -205,7 +205,7 @@ def mirror_at(b: BodyGenome, s: int):
 
 
 def mirror_limb(b: BodyGenome, rng) -> BodyGenome:
-    """Rastgele bir uzvun ayna simetriğini ekler (mutasyon için)."""
+    """Adds the mirror-symmetric counterpart of a random limb (for mutation)."""
     if b.n >= MAX_LIMBS or b.n < b.first_free:
         return b
     r = mirror_at(b, int(rng.integers(b.first_free, b.n + 1)))
@@ -213,8 +213,8 @@ def mirror_limb(b: BodyGenome, rng) -> BodyGenome:
 
 
 def delete_set(b: BodyGenome, rm: set):
-    """rm kümesindeki uzuvları sil, indeksleri kaydır. Dönüş: (vücut, {eski: yeni}) ya da geçersizse None.
-    Eski modda kemik 1 (omurga) silinemez; uzuv sayısı b.min_n altına inemez."""
+    """Delete the limbs in the set rm, shift the indices. Returns: (body, {old: new}) or None if invalid.
+    In the old mode bone 1 (spine) cannot be deleted; the limb count cannot drop below b.min_n."""
     if (1 in rm and b.legacy_spine) or 0 in rm or not rm or b.n - len(rm) < b.min_n:
         return None
     keep = [j for j in range(b.n + 1) if j not in rm]
@@ -228,7 +228,7 @@ def delete_subtree(b: BodyGenome, i: int):
 
 
 def add_limb_at(b: BodyGenome, parent: int, theta: int, length: int, template: int = None) -> BodyGenome:
-    """parent noktasına yeni uzuv ekle (grid kademeleriyle). template: özelliklerini kopyalayacağı uzuv."""
+    """Add a new limb at point `parent` (with grid levels). template: the limb whose properties are copied."""
     assert b.n < MAX_LIMBS
     if template is not None and template >= 1:
         vals = {f: int(getattr(b, f)[template]) for f in FIELDS}
@@ -239,7 +239,7 @@ def add_limb_at(b: BodyGenome, parent: int, theta: int, length: int, template: i
 
 
 def blank_body() -> BodyGenome:
-    """Editörün başlangıç canlısı: kafa + 2 uzuv (kemik 1 kafaya, kemik 2 ona bağlı). Yeni modda ikisi de sıradan uzuvdur."""
+    """The editor's starting creature: head + 2 limbs (bone 1 on the head, bone 2 attached to it). In the new mode both are ordinary limbs."""
     def arr(vals):
         return np.array(vals, dtype=np.int64)
     return BodyGenome(legacy_spine=False, parent=arr([0, 0, 1]), theta=arr([0, 12, 0]), length=arr([0, 4, 3]), mass=arr([3, 3, 3]),
@@ -249,14 +249,14 @@ def blank_body() -> BodyGenome:
 
 @dataclass
 class MutationConfig:
-    p_gene: float = 0.08          # her gen için kademe değişim olasılığı
+    p_gene: float = 0.08          # probability of a level change for each gene
     p_add: float = 0.05
     p_remove: float = 0.04
     p_mirror: float = 0.03
-    brain_rate: float = 0.08      # her ağırlık için mutasyon olasılığı
+    brain_rate: float = 0.08      # mutation probability for each weight
     brain_sigma: float = 0.25
-    brain_reset: float = 0.005    # ağırlığı tamamen yeniden çekme olasılığı
-    min_limbs: int = 4            # mutasyonla silinerek inilebilecek en az uzuv (2 uzuvlu 'V' balıkları önler)
+    brain_reset: float = 0.005    # probability of completely redrawing a weight
+    min_limbs: int = 4            # minimum limb count that deletion by mutation can reach (prevents 2-limb 'V' fish)
 
 
 def mutate_body(b: BodyGenome, rng, cfg: MutationConfig) -> BodyGenome:
@@ -269,7 +269,7 @@ def mutate_body(b: BodyGenome, rng, cfg: MutationConfig) -> BodyGenome:
         b = mirror_limb(b, rng)
     for f in FIELDS:
         a = getattr(b, f)
-        start = 0 if f == "mass" else 1       # kafanın sadece kütlesi var
+        start = 0 if f == "mass" else 1       # the head only has a mass
         for i in range(start, b.n + 1):
             if rng.random() < cfg.p_gene:
                 step = int(rng.choice([-1, 1]))
@@ -282,7 +282,7 @@ def mutate_body(b: BodyGenome, rng, cfg: MutationConfig) -> BodyGenome:
 
 
 def crossover_body(a: BodyGenome, b: BodyGenome, rng) -> BodyGenome:
-    """Topoloji A'dan; ortak uzuv indekslerinde her gen ayrı ayrı A veya B'den."""
+    """Topology from A; for the shared limb indices each gene comes separately from A or B."""
     c = a.copy()
     m = min(a.n, b.n)
     for f in FIELDS:
@@ -294,16 +294,16 @@ def crossover_body(a: BodyGenome, b: BodyGenome, rng) -> BodyGenome:
 
 
 # --------------------------------------------------------------------------- #
-#  BrainGenome (sabit topoloji MLP: giriş -> gizli(tanh) -> çıkış(tanh))
+#  BrainGenome (fixed-topology MLP: input -> hidden(tanh) -> output(tanh))
 # --------------------------------------------------------------------------- #
-N_SLOTS = MAX_LIMBS            # uzuv yuvası sayısı
-N_GLOBAL = 7                   # hedef(2) + gövde hızı(2) + açısal hız(1) + saat sin/cos(2)
+N_SLOTS = MAX_LIMBS            # number of limb slots
+N_GLOBAL = 7                   # target(2) + body velocity(2) + angular velocity(1) + clock sin/cos(2)
 N_IN = 3 * N_SLOTS + N_GLOBAL  # 79
 HIDDEN = 24
 N_OUT = N_SLOTS                # 24
-# Beyin v2 (ekosistem): 6 yeni giriş (yem yakınlığı, kendi enerjisi, en yakın canlının yönü(2)/yakınlığı/enerjisi) ve
-# 3 yeni çıkış (eşeyli üreme isteği, eşeysiz üreme isteği, ısırma isteği - ısırma aşama 3'te kullanılacak).
-# v1 beyinler v2'ye yükseltilebilir (yeni girişler yok sayılır, yeni çıkışlar kapalı) ve v2 beyinler v1 kodunda çalışır.
+# Brain v2 (ecosystem): 6 new inputs (food proximity, own energy, nearest creature's direction(2)/proximity/energy) and
+# 3 new outputs (sexual reproduction request, asexual reproduction request, bite request - biting will be used in stage 3).
+# v1 brains can be upgraded to v2 (new inputs are ignored, new outputs are off) and v2 brains work in v1 code.
 N_IN_V2 = N_IN + 6
 N_OUT_V2 = N_OUT + 3
 
@@ -324,7 +324,7 @@ class BrainGenome:
 
     @staticmethod
     def from_dict(d):
-        assert (d["n_in"], d["hidden"], d["n_out"]) in ((N_IN, HIDDEN, N_OUT), (N_IN_V2, HIDDEN, N_OUT_V2)), "beyin boyutu uyuşmuyor"
+        assert (d["n_in"], d["hidden"], d["n_out"]) in ((N_IN, HIDDEN, N_OUT), (N_IN_V2, HIDDEN, N_OUT_V2)), "brain size mismatch"
         return BrainGenome(*(np.array(d[k], dtype=float) for k in ("W1", "b1", "W2", "b2")))
 
 
@@ -334,8 +334,8 @@ def random_brain(rng, n_in: int = N_IN, n_out: int = N_OUT) -> BrainGenome:
 
 
 def upgrade_brain(br: BrainGenome, want_bias=(-2.0, -2.0, -2.0)) -> BrainGenome:
-    """v1 -> v2: yeni girişlerin ağırlığı 0 (yok sayılır), yeni çıkışların ağırlığı 0 ve bias'ı want_bias
-    (eşeyli üreme, eşeysiz üreme, ısırma). Varsayılan: hepsi kapalı."""
+    """v1 -> v2: weights of the new inputs are 0 (ignored), weights of the new outputs are 0 and their bias is want_bias
+    (sexual reproduction, asexual reproduction, bite). Default: all off."""
     if br.W1.shape[0] == N_IN_V2:
         return br.copy()
     W1 = np.vstack([br.W1, np.zeros((N_IN_V2 - br.W1.shape[0], br.W1.shape[1]))])
@@ -356,9 +356,9 @@ def mutate_brain(br: BrainGenome, rng, cfg: MutationConfig) -> BrainGenome:
 
 
 def crossover_brain(a: BrainGenome, b: BrainGenome, rng) -> BrainGenome:
-    """Nöron bazlı: her gizli nöronun gelen/giden ağırlıkları bir bütün olarak A veya B'den."""
+    """Per neuron: the incoming/outgoing weights of each hidden neuron come as a whole from A or B."""
     c = a.copy()
-    assert a.W1.shape == b.W1.shape and a.W2.shape == b.W2.shape, "beyin sürümleri uyuşmuyor"
+    assert a.W1.shape == b.W1.shape and a.W2.shape == b.W2.shape, "brain versions do not match"
     pick = rng.random(HIDDEN) < 0.5
     c.W1[:, pick] = b.W1[:, pick]
     c.b1[pick] = b.b1[pick]
@@ -369,13 +369,13 @@ def crossover_brain(a: BrainGenome, b: BrainGenome, rng) -> BrainGenome:
 
 
 # --------------------------------------------------------------------------- #
-#  Genome = vücut + beyin
+#  Genome = body + brain
 # --------------------------------------------------------------------------- #
 @dataclass
 class Genome:
     body: BodyGenome
     brain: BrainGenome
-    meta: dict = field(default_factory=dict)   # fitness sonuçları, nesil, ayarlar vb.
+    meta: dict = field(default_factory=dict)   # fitness results, generation, settings, etc.
 
     def copy(self):
         return Genome(self.body.copy(), self.brain.copy(), json.loads(json.dumps(self.meta)))
@@ -395,7 +395,7 @@ def random_genome(rng, brain_v2: bool = False, **kw) -> Genome:
 
 
 def mutate(g: Genome, rng, cfg: MutationConfig = None, freeze_body: bool = False) -> Genome:
-    """freeze_body=True: vücut aynen kalır, sadece beyin mutasyona uğrar."""
+    """freeze_body=True: the body stays exactly the same, only the brain is mutated."""
     cfg = cfg or MutationConfig()
     body = g.body.copy() if freeze_body else mutate_body(g.body, rng, cfg)
     return Genome(body, mutate_brain(g.brain, rng, cfg))
@@ -417,7 +417,7 @@ def load_json(path: str) -> Genome:
 
 
 # --------------------------------------------------------------------------- #
-#  Genom -> fizik gövdesi
+#  Genome -> physics body
 # --------------------------------------------------------------------------- #
 def body_spec(b: BodyGenome) -> dict:
     n = b.n
@@ -430,7 +430,7 @@ def body_spec(b: BodyGenome) -> dict:
 
 
 def build_bodies(genomes: list[Genome], n_points: int = None):
-    """n_points verilmezse batch'teki en büyük canlıya göre dolgu yapılır (fizik daha hızlı)."""
+    """If n_points is not given, padding is based on the largest creature in the batch (physics is faster)."""
     if n_points is None:
-        n_points = max(g.body.n for g in genomes) + 2     # + burun noktası
+        n_points = max(g.body.n for g in genomes) + 2     # + nose point
     return make_bodies([body_spec(g.body) for g in genomes], n_points=n_points)
