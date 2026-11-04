@@ -5,6 +5,8 @@ Creatures made of a head, rod-like limbs and joints learn to swim in a simulated
 while the genome also shapes limb count, lengths, angles and masses.
 No movement is hard-coded. Swimming emerges only from joint torques and water drag.
 
+![ss](screenshot.png)
+
 ## Highlights
 
 - Custom 2D physics engine in NumPy (top-down view, no gravity, viscous anisotropic drag)
